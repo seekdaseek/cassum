@@ -1,6 +1,11 @@
-# Findings against sibyl-memory-client 0.8.0
+# Findings
 
-Measured 2026-09-01 on macOS, Python 3.12.13. Raw output in `probes/`.
+Measured 2026-09-01 on macOS, Python 3.12.13.
+
+Part A is the memory SDK, raw output in `probes/`. Part B is the x402
+adapter: two of those are the vendor's, one is ours, and it is labelled.
+
+# Part A — sibyl-memory-client 0.8.0
 
 ## 1. Documented parameter name does not exist
 
@@ -52,3 +57,52 @@ An earlier reading of `delete_entity` returning `False` was reported as a
 silent failure. A control run shows it returns True on a live entity and False
 when there is nothing to delete. Correct behaviour. The original observation
 was on an already-archived entity and lacked a control.
+
+# Part B — the x402 adapter
+
+Challenges recorded verbatim in `tests/fixtures/` by `tools/record_402.py`.
+
+## 8. Cloudflare answers the default Python User-Agent with 403, not 402
+
+`x402.ochinimus.app` sits behind Cloudflare, which rejects the stdlib default
+`Python-urllib/3.12` User-Agent:
+
+    default urllib   403  challenge_header=False  body='{"type":"https://developers.cloudflare.com/...'
+    curl/8.7.1       402  challenge_header=True   body='{}'
+
+The 403 carries **no `payment-required` header at all**. A client that treats
+"no challenge header" as "this endpoint is free" or "this endpoint is down"
+reads a live, correctly-priced service as broken — and the failure is invisible
+from `curl`, which passes. Every stdlib-Python x402 client hits this.
+
+Fixed by sending a named User-Agent (`cassum/x402.py`, `REQUEST_HEADERS`).
+This is the service's edge configuration, not an x402 protocol defect.
+
+## 9. `paidGet` reports zero spend on a non-2xx that may have been paid
+
+`@seekdaseek/plugin-agentfeed` 0.1.2, `src/service.ts`: `paidGet` returns early
+when `!res.ok` and never sets `paidUsd`, while the `totalSpentUsd` increment
+sits *after* that return. A request that settled and then got a 500 back is
+reported as `{ok: false, paidUsd: undefined}` and never counted against the
+lifetime spend.
+
+So a failed paid call has genuinely UNKNOWN spend. `X402Provider.fetch` raises
+`BridgeError` rather than returning a tuple, because `(False, 0.0)` understates
+cost and `(False, price)` overstates it; both invent a data point the Router
+would then learn from. Not fixed here — it is a different repo.
+
+## 10. OUR BUG: naming a provider after its path parameter fragments memory
+
+Found by running `tools/quote.py`, not by a test. `X402Provider` derived
+`.name` from the last path segment, so `/api/token-risk/So1111..112` produced a
+provider named `So1111..112`.
+
+`Router` keys memory on `provider.name`. Every mint would therefore file as a
+separate provider: none would reach `min_calls`, none would ever leave
+LEARNING, and the router would go on paying while memory accumulated rows that
+changed no decision. Memory would look busy and be inert — which is exactly the
+failure the deletion test is supposed to expose, hidden behind real writes.
+
+Fixed by `endpoint_name()`, which strips the argument from the five known
+parameterised routes. Pinned by
+`test_a_path_parameter_never_becomes_the_provider_name`.

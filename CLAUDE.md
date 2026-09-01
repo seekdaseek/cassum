@@ -67,12 +67,19 @@ Verified 2026-09-01. Challenges recorded verbatim in `tests/fixtures/`.
 - success envelope is `{tool, data, paid}`, measured on the one free endpoint
   `/api/fear-greed`. `/pricing` and the forecast free tasters are 404 on HTTP;
   they exist on the MCP rail only.
+- SETTLEMENT IS SOLANA-ONLY. `@seekdaseek/plugin-agentfeed` 0.1.2 src/service.ts
+  signs with `@solana/kit` / `toClientSvmSigner` / `ExactSvmScheme` and parses
+  its key with bs58. It CANNOT sign for Base. Both rails are quoted and priced
+  identically; only the SVM one can be paid. A Base run needs an EVM bridge
+  that does not exist — that is new signing code and needs Sergiu's go-ahead.
+- the payee is our own treasury on both rails (cj7 on Solana, 6e6 on Base), so
+  a live run can never yield a savings number. See RESULTS.md, generated.
 
 ## State as of commit 370c162
 
-77 tests green. Working: memory layer, router, deletion-test harness, trace
+87 tests green. Working: memory layer, router, deletion-test harness, trace
 tool, generated RESULTS.md, packaging, public repo, cold-start recall demo,
-x402 discovery adapter (stage 1; payment gated off).
+x402 adapter with discovery live and settlement built but NEVER YET RUN.
 
 Measured result, `default_fleet`, 20 payloads: 0.00555 USDC per payload with
 memory against 0.01200 without. 24 calls against 80. 53.75% of spend recovered.
@@ -97,6 +104,8 @@ payload, from buy 9. That is where `tools/session.py --phase learn` stops.
 - `cassum/x402.py` — real paid provider, same interface as `sim.SimProvider`.
   Discovery is live and tested; `fetch()` refuses because signing is not built
 - `tools/quote.py` — prices endpoints off the 402 header, `--live` gates payment
+- `tools/pay_bridge.mjs` — the ONLY thing that can spend. Node, shells out to
+  @seekdaseek/plugin-agentfeed. Python never reads the private key
 - `tools/record_402.py` — the ONLY thing that touches the network. Writes
   `tests/fixtures/`, which is what the suite parses
 - `tools/trace.py` — prints the routing decision sequence
@@ -106,14 +115,31 @@ payload, from buy 9. That is where `tools/session.py --phase learn` stops.
 
 ## Still to build, in order
 
-1. x402 STAGE 2, settlement. BLOCKED ON A DECISION, not on code: which signer,
-   which rail, and what spend cap. `X402Provider.fetch()` raises
-   `PaymentNotImplemented` naming the three missing pieces. Do not implement
-   signing without Sergiu saying so — it spends real treasury USDC.
+1. RUN THE LIVE SETTLEMENT ONCE. The code is built and every refusal path is
+   verified, but NO PAYMENT HAS EVER BEEN MADE — nothing is proven until a tx
+   hash exists. Needs, in order:
+     a. `npm i @seekdaseek/plugin-agentfeed` in some directory (it is installed
+        NOWHERE on this machine right now), then `export CASSUM_BRIDGE_DIR=` it
+     b. `export AGENTFEED_PRIVATE_KEY=` the Solana payer, read from a file,
+        never pasted. Python never reads this; only the Node bridge does
+     c. `export CASSUM_MAX_USDC=0.01` for the first run, then raise it
+     d. `python tools/quote.py --live`
+   Expect settlement on SOLANA, not Base. If Base is required, that is a new
+   EVM bridge and new signing code — ask first.
 2. README section pointing at the memory call sites by file and function.
    Should also document `tools/session.py` and `tools/quote.py`, which the
    README does not mention yet.
 3. Video, 2 to 5 minutes. Two build-in-public posts tagging @sibylcap.
+
+DONE: x402 STAGE 2, settlement path. Cumulative run cap in `SpendCap`, read
+from ONE env var `CASSUM_MAX_USDC` (default 0.05) and checked against the
+header-parsed amount BEFORE the bridge is invoked, because there is no refund.
+An independent per-call ceiling is passed down to the JS client. The default
+cap is process-wide on purpose: per-provider caps turned a 0.05 ceiling into
+0.05 x 6 in `tools/quote.py`, pinned by
+`test_providers_without_an_explicit_cap_share_ONE_run_ceiling`. A bridge
+failure RAISES rather than returning a tuple, because plugin service.ts reports
+no `paidUsd` on a non-2xx and the spend is genuinely unknown.
 
 DONE: x402 STAGE 1, discovery. `quote()` prices an endpoint off its own 402
 challenge; the Router's `.price` comes from there and never from a constant,

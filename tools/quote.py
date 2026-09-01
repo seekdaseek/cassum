@@ -15,11 +15,16 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import sys
 
 from cassum.x402 import (
     BASE_RAIL,
+    CAP_ENV,
+    BridgeError,
+    CapExceeded,
     PaymentNotImplemented,
+    default_cap,
     X402Error,
     RECORDED_PATHS,
     X402Provider,
@@ -35,7 +40,7 @@ def main() -> int:
     ap.add_argument("--fixture", action="store_true", help="parse tests/fixtures instead of the network")
     ap.add_argument(
         "--live", action="store_true",
-        help="attempt settlement. OFF by default. Spends real USDC once implemented.",
+        help=f"SPENDS REAL USDC. Off by default. Ceiling is ${CAP_ENV}, default 0.05.",
     )
     args = ap.parse_args()
     sys.stdout.reconfigure(line_buffering=True)
@@ -69,18 +74,43 @@ def main() -> int:
     print(f"{len(providers)} endpoints priced from the challenge header. Nothing was paid.\n")
 
     if not args.live:
-        print("payment is OFF. Re-run with --live to see what settlement would need.")
+        print(f"payment is OFF. --live spends real USDC, capped by ${CAP_ENV}.")
         return 0
 
-    print("--live given, attempting settlement on the cheapest endpoint:\n")
+    # --- from here on, real money can move -----------------------------------
     cheapest = min(providers, key=lambda p: p.price)
     try:
-        cheapest.fetch()
-    except PaymentNotImplemented as err:
-        print(f"REFUSED: {err}")
+        # ONE cap for the run. Every provider built above already shares it via
+        # default_cap(); taking it from there rather than making a new one keeps
+        # the ledger honest if this tool ever buys more than once.
+        cap = default_cap()
+        rail = cheapest.settlement_rail()
+    except (CapExceeded, BridgeError) as err:
+        print(f"NOT SETTLED: {err}", file=sys.stderr)
         return 3
-    print("a payment path exists. That should not be reachable yet.", file=sys.stderr)
-    return 4
+    print("--live given. THIS SPENDS REAL USDC.")
+    print(f"  run ceiling   {cap.limit} USDC   (${CAP_ENV}, default 0.05)")
+    print(f"  buying        {cheapest.name} at {cheapest.price} USDC")
+    print(f"  priced on     {args.network}")
+    print(f"  SETTLING ON   {rail.network}   <- the JS payer is SVM-only, see FINDINGS.md")
+    print(f"  paying        {rail.pay_to}\n")
+
+    cheapest.live = True
+    try:
+        delivered, usdc = cheapest.fetch()
+    except CapExceeded as err:
+        print(f"REFUSED BY CAP, nothing signed: {err}", file=sys.stderr)
+        return 3
+    except (BridgeError, PaymentNotImplemented) as err:
+        print(f"NOT SETTLED: {err}", file=sys.stderr)
+        return 3
+
+    settlement = getattr(cheapest, "settlement", None)
+    print(f"paid       {usdc} USDC")
+    print(f"delivered  {delivered}   (usability predicate, not the status code)")
+    print(f"settlement {json.dumps(settlement) if settlement else 'none reported'}")
+    print(f"run spend  {cap.spent} of {cap.limit} USDC")
+    return 0
 
 
 if __name__ == "__main__":

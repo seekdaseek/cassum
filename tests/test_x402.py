@@ -8,6 +8,7 @@ proves the block itself works, because a guard nobody tests is decoration.
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import urllib.request
 from pathlib import Path
@@ -19,6 +20,10 @@ from cassum.router import UNTRIED, Router
 from cassum.sim import SimProvider
 from cassum.x402 import (
     BASE_RAIL,
+    CAP_ENV,
+    BridgeError,
+    CapExceeded,
+    SpendCap,
     FIXTURE_DIR,
     PaymentNotImplemented,
     Quote,
@@ -321,6 +326,26 @@ def provider(path: str = "/api/cascade-forecast", **kw) -> X402Provider:
     return X402Provider(path, quote_=quote_from_fixture(path), **kw)
 
 
+class FakeBridge:
+    """Stands in for tools/pay_bridge.mjs. Records every invocation, so a test
+    can assert the bridge was NEVER reached -- which is the only way to prove
+    the cap guards before signing rather than after."""
+
+    def __init__(self, result: dict):
+        self.result = result
+        self.calls: list[tuple[str, float]] = []
+
+    def __call__(self, path: str, *, max_per_call: float, **kw) -> dict:
+        self.calls.append((path, max_per_call))
+        return self.result
+
+
+def paid(data, usd: float = 0.02) -> dict:
+    return {"ok": True, "status": 200, "data": data, "paidUsd": usd,
+            "settlement": {"transaction": "5xFakeSig"}, "spentUsd": usd,
+            "payer": "GBFo...SQKz", "error": None}
+
+
 def test_fetch_refuses_when_live_is_off_which_is_the_default():
     p = provider()
     assert p.live is False
@@ -328,17 +353,142 @@ def test_fetch_refuses_when_live_is_off_which_is_the_default():
         p.fetch()
 
 
-def test_fetch_still_refuses_with_live_on_because_signing_is_not_implemented():
-    with pytest.raises(PaymentNotImplemented, match="not implemented"):
-        provider(live=True).fetch()
+def test_a_paid_call_that_returns_a_decline_is_charged_and_not_delivered():
+    """The whole thesis in one assertion. 200, real money moved, evidence
+    'unmeasured', so the buyer paid 0.02 for nothing usable."""
+    bridge = FakeBridge(paid(forecast("unmeasured")))
+    p = provider(live=True, cap=SpendCap(1.0), bridge=bridge)
+    delivered, usdc = p.fetch()
+    assert delivered is False
+    assert usdc == 0.02
+    assert p.cap.spent == 0.02
 
 
-def test_the_refusal_names_the_spend_and_the_payee():
-    with pytest.raises(PaymentNotImplemented) as err:
-        provider(live=True).fetch()
-    message = str(err.value)
-    assert "0.02 USDC" in message
-    assert BASE_PAY_TO in message
+def test_a_paid_call_that_returns_a_measured_answer_is_delivered():
+    bridge = FakeBridge(paid(forecast("measured", 0.31)))
+    delivered, usdc = provider(live=True, cap=SpendCap(1.0), bridge=bridge).fetch()
+    assert delivered is True
+    assert usdc == 0.02
+
+
+def test_the_cap_refuses_BEFORE_the_bridge_is_ever_invoked():
+    """There is no refund, so a cap checked after signing is a log line. The
+    assertion that matters is bridge.calls being empty."""
+    bridge = FakeBridge(paid(forecast("measured", 0.3)))
+    p = provider(live=True, cap=SpendCap(0.01), bridge=bridge)
+    with pytest.raises(CapExceeded, match="Refusing to sign"):
+        p.fetch()
+    assert bridge.calls == [], "the cap let a call through to the signer"
+
+
+def test_the_cap_is_cumulative_across_a_fleet_not_per_provider():
+    """One SpendCap shared by several providers is what makes it a RUN cap."""
+    cap = SpendCap(0.06)  # exactly three calls at 0.02
+    bridge = FakeBridge(paid(forecast("measured", 0.3)))
+    fleet = [provider(live=True, cap=cap, bridge=bridge) for _ in range(3)]
+    for p in fleet:
+        p.fetch()
+    assert cap.spent == 0.06
+    assert cap.remaining == 0.0
+    # Spending the ceiling exactly is allowed; the call after it is not, and no
+    # single provider had spent more than 0.02 of its own.
+    with pytest.raises(CapExceeded):
+        fleet[0].fetch()
+    assert len(bridge.calls) == 3, "the refused call must not reach the signer"
+
+
+def test_providers_without_an_explicit_cap_share_ONE_run_ceiling():
+    """Found in tools/quote.py, which built six providers and so six caps: a
+    0.05 ceiling silently became 0.05 per provider, or 0.30 for the fleet,
+    with every provider believing it was obeying the limit."""
+    from cassum.x402 import default_cap, reset_default_cap
+
+    reset_default_cap()
+    try:
+        a = provider("/api/sol-price")
+        b = provider("/api/squeeze-score")
+        assert a.cap is b.cap is default_cap()
+        assert a.cap.limit == 0.05
+    finally:
+        reset_default_cap()
+
+
+def test_an_unreadable_cap_does_not_explode_at_construction_time(monkeypatch):
+    """The ceiling is read lazily, so a bad CASSUM_MAX_USDC surfaces when
+    something tries to spend rather than when the module is imported."""
+    from cassum.x402 import reset_default_cap
+
+    monkeypatch.setenv(CAP_ENV, "banana")
+    reset_default_cap()
+    try:
+        p = provider()  # must not raise
+        with pytest.raises(CapExceeded, match="not a number"):
+            _ = p.cap
+    finally:
+        reset_default_cap()
+
+
+def test_the_cap_comes_from_one_env_var_with_a_documented_default():
+    """Raising the ceiling must be a shell edit, never a code change."""
+    assert SpendCap.from_env({}) == 0.05
+    assert SpendCap.from_env({CAP_ENV: "0.01"}) == 0.01
+    assert SpendCap.from_env({CAP_ENV: ""}) == 0.05
+    with pytest.raises(CapExceeded):
+        SpendCap.from_env({CAP_ENV: "not-a-number"})
+    with pytest.raises(CapExceeded):
+        SpendCap.from_env({CAP_ENV: "-1"})
+
+
+def test_a_bridge_failure_raises_rather_than_inventing_an_empty():
+    """plugin service.ts returns early on a non-2xx without reporting paidUsd,
+    so spend is genuinely unknown. Recording (False, 0.0) would understate cost
+    and (False, price) would overstate it; both are fabricated data points."""
+    bridge = FakeBridge({"ok": False, "status": 500, "data": None,
+                         "paidUsd": 0, "error": "AgentFeed HTTP 500"})
+    p = provider(live=True, cap=SpendCap(1.0), bridge=bridge)
+    with pytest.raises(BridgeError, match="UNKNOWN"):
+        p.fetch()
+    assert p.cap.spent == 0.0, "an unknown outcome must not move the ledger"
+
+
+def test_settlement_rail_is_solana_even_when_the_price_is_read_off_base():
+    """MEASURED in plugin src/service.ts: the payer is an SVM client and cannot
+    sign for Base. Pricing and settlement are therefore different rails, and
+    pretending otherwise is how a run gets signed against the wrong chain."""
+    p = provider(live=True, cap=SpendCap(1.0), bridge=FakeBridge(paid(forecast("measured", 0.3))))
+    assert p.network == BASE_RAIL
+    assert p.settlement_rail().network.startswith("solana:")
+    assert p.settlement_rail().usdc == p.price, "both rails quote the same amount"
+
+
+def test_the_bridge_is_told_the_per_call_ceiling():
+    """The per-call guard inside the JS client is independent of the run cap;
+    neither subsumes the other, so both must actually be wired."""
+    bridge = FakeBridge(paid(forecast("measured", 0.3)))
+    provider(live=True, cap=SpendCap(1.0), bridge=bridge).fetch()
+    assert bridge.calls == [("/api/cascade-forecast", 0.02)]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not on PATH")
+def test_the_real_bridge_honours_its_json_contract(tmp_path, monkeypatch):
+    """End to end into the actual Node script, WITHOUT spending: an empty
+    directory cannot resolve @seekdaseek/plugin-agentfeed, so the bridge fails
+    at import and can never reach a signer. What is under test is that its
+    one-line JSON contract survives the process boundary."""
+    monkeypatch.setenv("CASSUM_BRIDGE_DIR", str(tmp_path))
+    monkeypatch.setenv("AGENTFEED_PRIVATE_KEY", "not-a-real-key-and-never-parsed")
+    p = provider(live=True, cap=SpendCap(1.0))
+    with pytest.raises(BridgeError, match="cannot resolve"):
+        p.fetch()
+    assert p.cap.spent == 0.0
+
+
+def test_live_fetch_without_a_bridge_directory_fails_loudly():
+    """No silent fallback to some other install. If the operator has not said
+    where the payer lives, nothing is signed."""
+    p = provider(live=True, cap=SpendCap(1.0))
+    with pytest.raises(BridgeError, match="CASSUM_BRIDGE_DIR"):
+        p.fetch()
 
 
 def test_discovery_works_with_payment_off():

@@ -36,6 +36,9 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import os
+import shutil
+import subprocess
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -69,12 +72,39 @@ RECORDED_PATHS = (
 )
 
 
+# Settlement rail. MEASURED in plugin-agentfeed src/service.ts: the JS payer is
+# an SVM client (@solana/kit, toClientSvmSigner, ExactSvmScheme, bs58) and
+# CANNOT sign for Base. Pricing is read off whichever rail is asked for and is
+# identical on both; paying is Solana only until an EVM bridge exists.
+SETTLEMENT_RAIL_PREFIX = SOLANA_RAIL_PREFIX
+BRIDGE = Path(__file__).resolve().parent.parent / "tools" / "pay_bridge.mjs"
+
+# The cumulative ceiling for one run, in USDC. ONE env var, so raising it is a
+# shell edit and never a code change.
+CAP_ENV = "CASSUM_MAX_USDC"
+DEFAULT_CAP_USDC = 0.05
+BRIDGE_DIR_ENV = "CASSUM_BRIDGE_DIR"
+
+
 class X402Error(Exception):
     """Anything wrong with a challenge or a paid response."""
 
 
 class PaymentNotImplemented(X402Error):
     """Raised instead of spending. Deliberate, and not a TODO to be silenced."""
+
+
+class CapExceeded(X402Error):
+    """The run's cumulative ceiling would be broken by the next call."""
+
+
+class BridgeError(X402Error):
+    """The payment bridge could not complete. NOT a delivery outcome.
+
+    Raised rather than returned because `(False, price)` would invent an empty
+    from our own failure and teach the Router to condemn a provider that was
+    never asked anything.
+    """
 
 
 # Routes whose last segment is an ARGUMENT, not the endpoint. Read off the
@@ -402,6 +432,123 @@ def is_usable(path: str, payload: Any) -> bool:
     return predicate_for(path)(payload)
 
 
+# --- the spend cap ----------------------------------------------------------
+
+class SpendCap:
+    """A cumulative ceiling for one run, read from ONE env var.
+
+    Checked against the amount parsed out of the `payment-required` header
+    BEFORE the bridge is invoked, so a call that would break the ceiling is
+    never signed rather than being refunded afterwards. There is no refund.
+
+    The per-call ceiling inside the JS client is a SEPARATE, independent guard.
+    Neither one subsumes the other: per-call cannot stop a thousand cheap calls,
+    and cumulative cannot stop one call quoted above what it was quoted at
+    preflight. Both are wanted.
+    """
+
+    def __init__(self, limit_usdc: float | None = None) -> None:
+        self.limit = self.from_env() if limit_usdc is None else float(limit_usdc)
+        self.spent = 0.0
+
+    @staticmethod
+    def from_env(env: dict[str, str] | None = None) -> float:
+        raw = (env if env is not None else os.environ).get(CAP_ENV)
+        if raw is None or raw.strip() == "":
+            return DEFAULT_CAP_USDC
+        try:
+            value = float(raw)
+        except ValueError as err:
+            raise CapExceeded(
+                f"{CAP_ENV}={raw!r} is not a number. Refusing to spend on an "
+                "unreadable ceiling."
+            ) from err
+        if value < 0:
+            raise CapExceeded(f"{CAP_ENV}={raw!r} is negative.")
+        return value
+
+    @property
+    def remaining(self) -> float:
+        return max(0.0, round(self.limit - self.spent, 8))
+
+    def check(self, usdc: float) -> None:
+        """Raise if this call would break the ceiling. Call BEFORE paying."""
+        if round(self.spent + usdc, 8) > self.limit:
+            raise CapExceeded(
+                f"{CAP_ENV} is {self.limit} USDC; {self.spent} already spent this run, "
+                f"and this call is quoted at {usdc}. Refusing to sign. "
+                f"Raise it with: export {CAP_ENV}=<usdc>"
+            )
+
+    def record(self, usdc: float) -> None:
+        self.spent = round(self.spent + usdc, 8)
+
+
+_DEFAULT_CAP: SpendCap | None = None
+
+
+def default_cap() -> SpendCap:
+    """The process-wide cap, which is what "per run" means: one interpreter
+    invocation is one run.
+
+    A provider that quietly built its OWN cap would turn a 0.05 ceiling into
+    0.05 PER PROVIDER, so a six-endpoint fleet could spend 0.30 while every
+    provider believed it was obeying the limit. Sharing one object is the only
+    thing that makes the ceiling cumulative.
+    """
+    global _DEFAULT_CAP
+    if _DEFAULT_CAP is None:
+        _DEFAULT_CAP = SpendCap()
+    return _DEFAULT_CAP
+
+
+def reset_default_cap() -> None:
+    """Test hook. Not for production: a run that resets its own ledger has no
+    ceiling."""
+    global _DEFAULT_CAP
+    _DEFAULT_CAP = None
+
+
+def bridge_command(path: str, *, max_per_call: float, bridge: Path = BRIDGE) -> list[str]:
+    node = shutil.which("node")
+    if node is None:
+        raise BridgeError("node is not on PATH, so the payment bridge cannot run.")
+    return [node, str(bridge), "--path", path, "--max-usd", str(max_per_call)]
+
+
+def run_bridge(path: str, *, max_per_call: float, timeout: int = 120) -> dict[str, Any]:
+    """Invoke the Node payer and parse its single line of JSON.
+
+    The child inherits this process's environment, which is how
+    AGENTFEED_PRIVATE_KEY reaches the signer. Python never reads that variable
+    and never logs the environment.
+    """
+    cwd = os.environ.get(BRIDGE_DIR_ENV)
+    if not cwd:
+        raise BridgeError(
+            f"{BRIDGE_DIR_ENV} is not set. Point it at a directory where "
+            "@seekdaseek/plugin-agentfeed is installed."
+        )
+    try:
+        proc = subprocess.run(
+            bridge_command(path, max_per_call=max_per_call),
+            cwd=cwd, capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as err:
+        raise BridgeError(
+            f"bridge timed out after {timeout}s on {path}. Spend is UNKNOWN: a "
+            "signature may have been sent. Check the payer before retrying."
+        ) from err
+
+    line = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
+    if not line:
+        raise BridgeError(f"bridge printed nothing on {path}. stderr: {proc.stderr.strip()[:400]}")
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError as err:
+        raise BridgeError(f"bridge stdout was not JSON: {line[:200]!r}") from err
+
+
 # --- the provider -----------------------------------------------------------
 
 class X402Provider:
@@ -421,6 +568,8 @@ class X402Provider:
         live: bool = False,
         base_url: str = BASE_URL,
         network: str = BASE_RAIL,
+        cap: "SpendCap | None" = None,
+        bridge: Callable[..., dict[str, Any]] | None = None,
     ) -> None:
         self.path = path
         self.quote = quote_
@@ -429,6 +578,19 @@ class X402Provider:
         self.base_url = base_url
         self.network = network
         self.price = quote_.price_on(network)
+        # One cap object shared across a fleet is what makes the ceiling a RUN
+        # ceiling rather than a per-provider one. Constructed lazily, so merely
+        # importing this module cannot fail on a malformed CASSUM_MAX_USDC.
+        self._cap = cap
+        self._bridge = bridge or run_bridge
+
+    @property
+    def cap(self) -> SpendCap:
+        return self._cap if self._cap is not None else default_cap()
+
+    @cap.setter
+    def cap(self, value: SpendCap) -> None:
+        self._cap = value
 
     @classmethod
     def discover(
@@ -460,24 +622,52 @@ class X402Provider:
         """The usability predicate, exposed so it is testable without paying."""
         return is_usable(self.path, payload)
 
+    def settlement_rail(self) -> Rail:
+        """The rail that will actually be signed. NOT self.network: the JS payer
+        is SVM-only, so a provider priced on Base still settles on Solana."""
+        for rail in self.quote.rails:
+            if rail.network.startswith(SETTLEMENT_RAIL_PREFIX):
+                return rail
+        raise BridgeError(
+            f"{self.name}: no {SETTLEMENT_RAIL_PREFIX}* rail offered, and the "
+            "bridge cannot sign for anything else."
+        )
+
     def fetch(self) -> tuple[bool, float]:
-        """STAGE 2, NOT IMPLEMENTED. Charged either way is the point of the
-        interface, so a half-built payment path that silently returns
-        (False, price) would fabricate an empty_rate out of our own bug and
-        teach the Router to condemn a provider that was never called."""
+        """Buy once. Returns (delivered, usdc), same as `sim.SimProvider.fetch`.
+
+        `delivered` is the usability predicate over the payload, never the
+        status code. `usdc` is what was actually charged, which is why a paid
+        call that returns a decline is (False, price) -- the case this whole
+        project exists to measure.
+        """
         if not self.live:
             raise PaymentNotImplemented(
                 f"{self.name}: fetch() needs live=True, which is off by default. "
                 "Discovery (quote/price/decide) works without it."
             )
-        raise PaymentNotImplemented(
-            f"{self.name}: settlement is not implemented and this call would spend "
-            f"{self.price} USDC of real treasury funds.\n"
-            "Missing, all three deliberately absent until the treasury holder decides:\n"
-            f"  1. a signer for the {self.network} rail, paying to "
-            f"{self.quote.rail(self.network).pay_to}\n"
-            "  2. the X-PAYMENT header construction for x402Version "
-            f"{self.quote.x402_version}, scheme {self.quote.rail(self.network).scheme}\n"
-            "  3. a spend cap enforced against the quoted amount BEFORE signing, "
-            "reading the amount from the payment-required header rather than a config."
-        )
+
+        rail = self.settlement_rail()
+        quoted = rail.usdc
+        # BEFORE signing. There is no refund, so an after-the-fact check is a
+        # log line, not a guard.
+        self.cap.check(quoted)
+
+        result = self._bridge(self.path, max_per_call=quoted)
+
+        if not result.get("ok"):
+            # MEASURED in plugin src/service.ts: paidGet returns early on a
+            # non-2xx and never reports paidUsd, even when a settlement header
+            # came back. So spend here is genuinely UNKNOWN and recording
+            # either 0.0 or the price would be a fabricated data point.
+            raise BridgeError(
+                f"{self.name}: bridge reported failure, so spend is UNKNOWN and no "
+                f"empty_rate is recorded. status={result.get('status')} "
+                f"error={result.get('error')}"
+            )
+
+        paid = float(result.get("paidUsd") or 0.0)
+        self.cap.record(paid)
+        self.settlement = result.get("settlement")
+        delivered = self.decide(result.get("data"))
+        return delivered, paid
