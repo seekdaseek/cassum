@@ -193,17 +193,44 @@ Tag count is not it: `squeeze-score` carries SIX tags and settles while
 character. That leaves the description, at 683 characters against a
 largest-working 237.
 
-LEADING HYPOTHESIS, NOT YET PROVEN: the facilitator enforces a length bound on
-a field inside `paymentPayload`, and this description exceeds it. It cannot be
-proven from the client, because the description is chosen by the server and is
-not something a payer can shorten. The confirming test is a one-line server
-change -- shorten `get_cascade_forecast`'s `desc` in `expansion.js` to roughly
-200 characters, redeploy, retry -- and it has NOT been made, because that is a
-production change on a live paid service.
+### CONFIRMED by A/B/A on the live service, 2026-09-01
 
-The description is a published string rendered into `GET /`, the well-known
-document and the landing page, so shortening it is a product decision as well
-as a fix.
+`expansion.js` was backed up, `get_cascade_forecast`'s `desc` cut from 683
+characters to 80, redeployed (`pm2 delete` + `pm2 start`, never `restart`),
+tested, then restored from the backup and redeployed again. `/api/sol-price`
+was paid in every state as a control, so a broken deploy could not be mistaken
+for a result.
+
+| state | desc | challenge | control | cascade-forecast |
+|---|---:|---:|---|---|
+| A before | 683 | 2532 B | settles | **402** |
+| B short | **80** | 1728 B | settles | **200, settled** |
+| A after | 683 | 2532 B | settles | **402** |
+
+In state B it not only settled but answered: `evidence: "measured"`,
+`p = 0.199`, paid 0.02 USDC, transaction
+`0x392abd8ccac29341482ff7da2b73b7ad1e61e1f1fde594e82ac1768f41f40048`, block
+50739589, 0.020000 USDC on chain. The price was unchanged at 20000 base units
+throughout, so nothing about the amount moved.
+
+**A long `resource.description` makes an endpoint unpayable.** The CDP
+facilitator rejects the resulting `paymentPayload` with HTTP 400, the server
+relays that as a fresh 402, and the endpoint's own handler is never reached.
+The failure is invisible from `curl`, which only ever sees a correct-looking
+challenge.
+
+The exact bound is NOT established. What is measured is that 683 fails, 80
+works, and 237 (`/api/squeeze-score`) works. The limit lies somewhere in
+(237, 683] and finding it costs one redeploy per probe.
+
+NOT FIXED. The description is a published string rendered verbatim into
+`GET /`, `/.well-known/x402.json` and the landing page, so shortening it is a
+product decision, not a bug fix, and it was restored intact. The backup
+`expansion.js.bak-desc-test-20260901-131347` was left in place beside the
+existing `.bak` files.
+
+Anything the API gains from a thorough description, it loses entirely by not
+being purchasable.
 
 CONSEQUENCE FOR CASSUM: the reference case for the whole usability predicate
 cannot currently be measured live. Its decline behaviour is still pinned
