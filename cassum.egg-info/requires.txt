@@ -1,0 +1,4 @@
+sibyl-memory-client>=0.8.0
+
+[dev]
+pytest>=8
