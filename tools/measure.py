@@ -36,39 +36,57 @@ REPO = Path(__file__).resolve().parent.parent
 # symbol's history is thin, so the symbol mix IS the measurement: majors have
 # deep tape and should answer, obscure perps should decline. A run of nothing
 # but SOLUSDT would report a 0% empty rate and prove nothing about the predicate.
-# Interleaved, not blocked: a run cut short by budget must still have sampled
-# both kinds. Blocking majors first would report a 0% empty rate for any run
-# that stopped early.
-FORECAST_SYMBOLS = [
-    "SOL", "SXT", "BTC", "ZEREBRO", "ETH",
-    "GOAT", "XRP", "MOODENG", "DOGE", "PNUT",
-]
+# Symbol choices are EVIDENCE, not guesses. Each was checked against the live
+# data before the run: /opt/agentfeed/liquidations.db for tape coverage and
+# /opt/caliper/model.json for which symbols the forecaster was fitted on.
+#
+#   (symbol, expectation, why)
+# expectation is what the source says SHOULD happen. Recording it next to the
+# outcome is the point: a symbol that delivers when it was expected empty is a
+# finding about coverage, not a failed test.
 
-# MEASURED: /api/liquidations answers even for obscure perps (ZEREBROUSDT
-# returned 25 prints), so the empty case needs genuinely quiet or unlisted
-# symbols. A buyer scanning a token list hits exactly these, and the empty
-# result set is what the usability predicate must catch.
-# Interleaved for the same reason as FORECAST_SYMBOLS, and it was NOT the first
-# time round: a 5-call run against this list in blocked order never reached the
-# unlisted symbols at indices 5 and 6, so the empty case went untested and the
-# run reported a 0% empty rate it had not earned.
+# Checked 2026-09-01 against liquidations.db (849 symbols ever, 723 in 24h).
 LIQ_SYMBOLS = [
-    "SOLUSDT",            # deep tape, expect delivery
-    "NOSUCHCOINUSDT",     # unlisted, expect an empty set
-    "BTCUSDT",
-    "PLACEHOLDER1USDT",   # unlisted
-    "ZEREBROUSDT",        # thin but listed
-    "ETHUSDT",
-    "MOODENGUSDT",
+    ("SOLUSDT",          "deliver", "major, continuously in the tape"),
+    ("NOSUCHCOINUSDT",   "EMPTY",   "invented ticker, 0 rows ever in liquidations.db"),
+    ("BTCUSDT",          "deliver", "major, continuously in the tape"),
+    ("AI16ZUSDT",        "EMPTY",   "REAL token, but 0 rows ever recorded - a genuine tape gap"),
+    ("ZEREBROUSDT",      "deliver", "1,228 rows ever"),
+    ("PLACEHOLDER1USDT", "EMPTY",   "invented ticker, 0 rows ever in liquidations.db"),
+    ("ETHUSDT",          "deliver", "major, continuously in the tape"),
+    ("FARTCOINUSDT",     "deliver", "10,462 rows ever"),
+    ("MOODENGUSDT",      "deliver", "1,538 rows ever"),
+    ("BANANAS31USDT",    "deliver", "1,703 rows ever"),
 ]
 
-# Sample counts are what the remaining budget affords, not what is ideal.
-# Purchases ACCUMULATE in the store, so a later run with more funds extends
-# these same provider records rather than starting over.
+# Checked against model.json: fitted 2026-09-01T12:00Z on 1,831,458 pairs,
+# thresholds stored for 384 symbols. No stored threshold means the symbol was
+# not in the training universe, and caliper's answer.mjs then refuses rather
+# than recomputing a threshold that would answer a different question.
+FORECAST_SYMBOLS = [
+    ("SOLUSDT",        "measured",   "model threshold present"),
+    ("AI16ZUSDT",      "UNMEASURED", "no model threshold AND 0 tape rows - never recorded"),
+    ("BTCUSDT",        "measured",   "model threshold present"),
+    ("ANETUSDT",       "UNMEASURED", "no model threshold, 1 tape row - far below minWindows"),
+    ("ETHUSDT",        "measured",   "model threshold present"),
+    ("CLSKUSDT",       "UNMEASURED", "no model threshold, 1 tape row"),
+    ("ZEREBROUSDT",    "measured",   "model threshold present (1,228 tape rows)"),
+    ("NOSUCHCOINUSDT", "UNMEASURED", "invented ticker, never recorded"),
+]
+
+# peg-deviation is DELIBERATELY ABSENT. Verified before spending: all 12 tracked
+# symbols carry 288 ticks/24h and 12/hour, so `no_data` is unreachable with the
+# `hours` floor of 1; on-chain price uniqueness runs 18-57% against a 2%
+# stale_pool threshold, so `stale_pool` is unreachable too; and an untracked
+# symbol makes resolveSymbol THROW, which is a 500, not a priced decline.
+# Sampling it would buy six guaranteed deliveries.
+#
+# oi_spike_scan is also absent, at Sergiu's instruction: its 30-minute baseline
+# rebuilds from process boot and today saw nine redeploys, so a warming:true
+# would measure our own deploys rather than the product.
 DEFAULT_PLAN = [
-    ("/api/cascade-forecast", 4),    # the reference case, priced at 0.02 each
-    ("/api/liquidations", 5),
-    ("/api/sol-price", 6),
+    ("/api/liquidations", 20),
+    ("/api/cascade-forecast", 8),
 ]
 
 
@@ -85,14 +103,14 @@ def payer_balance() -> dict | None:
         return None
 
 
-def sampled_path(path: str, i: int) -> str:
+def sampled_path(path: str, i: int):
     """Vary the query so the sample spans real behaviour, not one lucky symbol.
     The query never reaches the provider name -- see route_of()."""
-    if path == "/api/cascade-forecast":
-        return f"{path}?symbol={FORECAST_SYMBOLS[i % len(FORECAST_SYMBOLS)]}"
-    if path == "/api/liquidations":
-        return f"{path}?symbol={LIQ_SYMBOLS[i % len(LIQ_SYMBOLS)]}"
-    return path
+    table = {"/api/cascade-forecast": FORECAST_SYMBOLS, "/api/liquidations": LIQ_SYMBOLS}.get(path)
+    if not table:
+        return path, None
+    sym, expect, why = table[i % len(table)]
+    return f"{path}?symbol={sym}", (sym, expect, why)
 
 
 def main() -> int:
@@ -159,15 +177,26 @@ def main() -> int:
         print("\n  --plan given. Nothing was paid.")
         return 0
 
+    # --- declare the symbol plan BEFORE spending -----------------------------
+    print("\n  symbols chosen, and why. `expect` is what the SOURCE says should happen;")
+    print("  a symbol that delivers when it was expected empty is a coverage finding.")
+    print(f"\n  {'symbol':<18} {'expect':<11} why")
+    print("  " + "-" * 88)
+    for _, table in (("liq", LIQ_SYMBOLS), ("fc", FORECAST_SYMBOLS)):
+        for sym, expect, why in table:
+            print(f"  {sym:<18} {expect:<11} {why}")
+        print()
+
     # --- the run ------------------------------------------------------------
     store = Store.open(db)
-    print(f"\n  {'#':>3}  {'endpoint':<20} {'ok':<4} {'usdc':>6}  tx")
-    print("  " + "-" * 92)
+    print(f"  {'#':>3}  {'endpoint':<18} {'symbol':<17} {'expect':<11} {'got':<4} {'usdc':>6}")
+    print("  " + "-" * 78)
     i = 0
     stopped = None
+    outcomes: list[tuple] = []
     for path, n, q, usd in priced:
         for k in range(n):
-            call = sampled_path(path, k)
+            call, meta = sampled_path(path, k)
             p = X402Provider(call, quote_=q, live=True, cap=cap, rail=rail,
                              name=endpoint_name(path))
             try:
@@ -184,9 +213,12 @@ def main() -> int:
                 note=f"measurement sample {k + 1}/{n} of {call}",
                 settlement=settlement,
             )
-            tx = tx_hash(settlement) or "-"
-            print(f"  {i:>3}  {p.name:<20} {'yes' if delivered else 'NO':<4} "
-                  f"{paid:>6.3f}  {tx}")
+            sym, expect, _why = meta or ("-", "-", "")
+            got = "yes" if delivered else "NO"
+            agree = (expect == "EMPTY" or expect == "UNMEASURED") == (not delivered)
+            outcomes.append((p.name, sym, expect, delivered, agree))
+            print(f"  {i:>3}  {p.name:<18} {sym:<17} {expect:<11} {got:<4} {paid:>6.3f}"
+                  f"{'' if agree else '   <-- DISAGREES WITH SOURCE'}")
         if stopped:
             break
     print("  " + "-" * 92)
@@ -203,6 +235,16 @@ def main() -> int:
         state = "condemned" if float(b.get("empty_rate", 0)) >= router.threshold and int(b["calls"]) >= router.min_calls else ""
         print(f"  {row['name']:<20} {b['calls']:>6} {b['empty']:>6} "
               f"{b['empty_rate']:>11.4f} {b['usdc_spent']:>9.5f}  {state}")
+    # --- expectation vs outcome ---------------------------------------------
+    if outcomes:
+        disagreed = [o for o in outcomes if not o[4]]
+        print(f"\n  expectation check: {len(outcomes) - len(disagreed)}/{len(outcomes)} matched the source")
+        if disagreed:
+            print("  SYMBOLS THAT DISAGREED WITH THE SOURCE -- coverage findings, not failures:")
+            for name, sym, expect, delivered, _ in disagreed:
+                print(f"    {name}/{sym}: source said {expect}, "
+                      f"actually {'delivered' if delivered else 'returned nothing usable'}")
+
     print(f"\n  spent this run   {cap.spent} of {cap.limit} USDC")
     print(f"  memory           {db}")
     return 1 if stopped else 0

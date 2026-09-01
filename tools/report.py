@@ -111,8 +111,24 @@ def live_block(db: Path | None) -> list[str]:
     else:
         out += [
             f"**Dispersion WAS observed:** {empty} of {calls} paid calls returned",
-            "nothing usable, and the rates above differ between endpoints. That is the",
-            "signal the router ranks on, measured rather than assumed.",
+            "nothing usable, and the rates above differ between endpoints. The decline",
+            "branch of the usability predicate is exercised against live payments, not",
+            "only against fixtures.",
+            "",
+            "**Two things these rates are NOT.**",
+            "",
+            "They are not intrinsic properties of the endpoints. An empty rate is a",
+            "function of the QUERY MIX, and this one was deliberately built half from",
+            "symbols the source says will answer and half from symbols it says will",
+            "not -- tickers absent from the liquidation tape, and symbols with no",
+            "threshold in the forecaster's fitted model. Sampling only majors would",
+            "have reported 0.0000 for the same endpoints, as an earlier run did.",
+            "",
+            "They are not a ranking. These endpoints answer different questions and are",
+            "not substitutes, so a buyer cannot swap the dear one for the cheap one the",
+            "way `default_fleet`'s providers can be swapped. The cost-per-payload",
+            "arithmetic is sound and the router would compute it correctly; what does",
+            "not follow is that anyone should act on the comparison.",
             "",
         ]
     out += [

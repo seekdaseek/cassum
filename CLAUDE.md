@@ -153,15 +153,19 @@ payload, from buy 9. That is where `tools/session.py --phase learn` stops.
 
 ## Still to build, in order
 
-1. EXTEND THE MEASUREMENT. First run is DONE but small and its decline branch
-   is untested: 15 paid calls, 0.101 USDC, and every single one delivered, so
-   the measured empty rate is 0.0000 everywhere. That does NOT corroborate
-   `default_fleet` -- on this evidence the live fleet looks like `flat_fleet`.
-   `liquidations` was sampled 5 times against a 7-symbol rotation in blocked
-   order, so the two unlisted symbols meant to return an empty set were never
-   reached; LIQ_SYMBOLS is now interleaved so a rerun hits them early.
-   Purchases ACCUMULATE, so a further run extends the same rows. Roughly 0.19
-   USDC more buys cascade-forecast x10 as originally planned.
+1. EXTEND THE MEASUREMENT, or stop. 43 paid calls now stand in `live.db`,
+   0.321 USDC, every one with its tx in the journal under `extra.tx`. Measured
+   empty rates: cascade-forecast 0.3333 (12 calls), liquidations 0.2400 (25),
+   sol-price 0.0000 (6). All 28 calls of the second run matched what the
+   handler source predicted, symbol by symbol.
+   NOT SAMPLED and why: peg-deviation cannot decline today (all 12 tracked
+   symbols carry 288 ticks/24h so no_data is unreachable, uniqueness is 18-57%
+   against a 2% stale_pool threshold, and an untracked symbol makes
+   resolveSymbol THROW a 500 rather than declining); oi_spike_scan was excluded
+   at Sergiu's instruction because its 30-minute baseline rebuilds on every
+   deploy and today saw nine. Endpoints with a verified decline branch still
+   unsampled: cascade-history 0.03, liq-heatmap 0.05, liq-history 0.05,
+   squeeze-score 0.10. See FINDINGS Part C.
 
 OLD, kept for the record: THE MEASUREMENT RUN. BLOCKED ON FUNDS, not code. `tools/measure.py` is
    built and its pre-flight refuses to start: the plan costs 0.2180 USDC and
