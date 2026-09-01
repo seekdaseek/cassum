@@ -5,6 +5,81 @@ Measured 2026-09-01 on macOS, Python 3.12.13.
 Part A is the memory SDK, raw output in `probes/`. Part B is the x402
 adapter: two of those are the vendor's, one is ours, and it is labelled.
 
+## The three that mattered
+
+Each was found by running something, not by reading docs. Cost is real USDC
+spent on Base mainnet reaching the conclusion.
+
+### 1. The CDP facilitator rejects a payment whose resource description is too long
+
+**A long `resource.description` makes an x402 endpoint unpayable.** The
+facilitator answers `/verify` with HTTP 400 (`'paymentPayload' is invalid`),
+the resource server relays that as a fresh 402, and the endpoint's own handler
+is never reached. It is invisible from `curl`, which only ever sees a
+correct-looking challenge, and the endpoint keeps advertising a price it will
+not accept.
+
+*Found:* `get_cascade_forecast` returned 402 to a paid call while every other
+endpoint settled. Price, query string, client spend cap, expansion
+registration and Cloudflare were each eliminated by test — a control endpoint
+was paid through an SSH tunnel straight to the origin, bypassing Cloudflare
+entirely, and still failed. A structural diff of a working challenge against
+the failing one left exactly one candidate: 683 characters of description
+against a largest-working 237.
+
+*Proved:* A/B/A on the live service. Backup, shorten to 80 chars, redeploy,
+test, restore, redeploy. `sol-price` was paid in all three states as a control,
+so a broken deploy could not be read as a result.
+
+| state | desc | challenge | control | cascade-forecast |
+|---|---:|---:|---|---|
+| A | 683 | 2532 B | settles | **402** |
+| B | **80** | 1728 B | settles | **200, settled** |
+| A | 683 | 2532 B | settles | **402** |
+
+*Bisected* over seven redeploys: **487 chars settles, 515 does not**. The bound
+lies in (487, 515].
+
+*Fixed at the boundary,* not in the copy: `challengeDesc()` in `payments.js`
+trims to 256 chars when building the challenge only. `GET /`,
+`/.well-known/x402.json`, the landing page and the MCP tool definitions still
+serve the full text, because that is what humans and LLM tool-selection read.
+All 44 endpoints re-verified afterwards.
+
+*Cost:* ~0.19 USDC across the diagnosis and bisection. The endpoint had been
+unbuyable for its entire life; it is AgentFeed's flagship exclusive.
+
+### 2. Cloudflare answers the default Python User-Agent with 403 and no challenge
+
+`Python-urllib/3.12` gets **403 with no `payment-required` header at all** —
+not 402. A client that reads "no challenge header" as "free" or "down" sees a
+live, correctly-priced service as broken. Every stdlib-Python x402 client hits
+this, and it passes from `curl`.
+
+*Found:* the first fixture recording run returned 403 where `curl` had returned
+402 minutes earlier. Isolated by sending three User-Agents at the same URL.
+
+*Cost:* nothing. Fixed with a named User-Agent before any payment was made.
+
+### 3. AI16ZUSDT is absent from a liquidation tape sold as complete
+
+`AI16ZUSDT` is a real, actively traded token with **zero rows ever** in
+`liquidations.db` — which holds 849 symbols historically and 723 in a 24-hour
+window. Not a thin tape for that symbol: an empty one.
+
+*Found:* choosing symbols for the empty-rate measurement by querying the tape
+directly rather than guessing which would be sparse. It was picked as a
+predicted empty and confirmed empty on both sampled calls.
+
+*Also surfaced:* the forecaster's model covers 384 symbols while the tape
+covers 849, so **465 symbols are recorded but unmodelled**. That is why an
+earlier run sampling `SXT` and `ZEREBRO` as "thin tape" got 4/4 measured —
+both are in the model.
+
+*Cost:* 0.006 USDC, two `liquidations` calls at 0.003.
+
+---
+
 # Part A — sibyl-memory-client 0.8.0
 
 ## 1. Documented parameter name does not exist

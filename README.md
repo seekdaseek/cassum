@@ -11,16 +11,62 @@ paying the ones that don't.
 ## Where memory is load-bearing
 
 Built on [Sibyl Memory](https://docs.sibyllabs.org/memory/) (`sibyl-memory-client`).
+Two functions, one file. Everything below is in `cassum/memory.py`.
 
-| What | Tier | Call site |
+| | write | read |
 |---|---|---|
-| One record per data provider: calls, empties, USDC spent, empty rate | WARM entity | `cassum/memory.py` → `Store.record_purchase`, `Store.get_provider` |
-| One event per paid call: what was considered, what was bought, what came back, what it cost | COLD journal | `cassum/memory.py` → `Store.record_purchase` → `write_event` |
+| **function** | `Store.record_purchase` | `Store.get_provider` |
+| **line** | [`memory.py:115`](cassum/memory.py#L115) | [`memory.py:81`](cassum/memory.py#L81) |
+| **tier** | WARM entity + COLD journal | WARM entity |
+| **called from** | `Router.buy_one` — [`router.py:76`](cassum/router.py#L76) | `Router.verdict` — [`router.py:34`](cassum/router.py#L34) |
 
-**Delete the memory and the router has no record of what it bought.** On every
-fresh start it pays the same failing provider again, and the spend the agent
-exists to avoid comes back in full. The core function is not degraded, it is
-absent.
+**What is persisted.** One entity per provider, keyed by name
+([`memory.py:144`](cassum/memory.py#L144)): `calls`, `empty`, `usdc_spent`,
+`empty_rate`. Plus one journal event per paid call
+([`memory.py:153`](cassum/memory.py#L153)) carrying what was evaluated, what
+was bought, what came back and — for a real payment — the on-chain
+transaction hash under `extra.tx`.
+
+**How a fresh process recalls it.** `Store.open(path)` on the same SQLite file.
+`tools/session.py --phase recall` is exactly that: a second OS process, a
+`ReadOnlyStore` whose `record_purchase` raises
+([`session.py:157`](tools/session.py#L157)) so it *cannot* buy, and it still
+names the right provider. See [Cold-start recall](#cold-start-recall-across-two-processes).
+
+**What decision changes.** `Router.verdict`
+([`router.py:31`](cassum/router.py#L31)) turns a provider record into UNTRIED /
+LEARNING / TRUSTED / CONDEMNED. `Router.effective_cost`
+([`router.py:45`](cassum/router.py#L45)) then ranks on
+`price / (1 - empty_rate)` — cost per *delivered* payload — rather than on
+sticker price. With memory, the dearest provider per call is chosen because it
+is the cheapest per payload. Without it, every provider is UNTRIED forever and
+the only available signal is the sticker price.
+
+### The deletion test
+
+`cassum/ablate.py` runs the same workload twice: once against Sibyl Memory,
+once against a `NullStore` ([`ablate.py:13`](cassum/ablate.py#L13)) that
+accepts every write and returns nothing on every read. That second run is the
+judges' litmus test, executed rather than asserted.
+
+| | calls | USDC | USDC per delivered payload |
+|---|---:|---:|---:|
+| with memory | 24 | 0.111 | 0.00555 |
+| **memory deleted** | **80** | **0.24** | **0.012** |
+
+Both runs delivered 20 payloads. **2.162x** the cost per payload with memory
+removed — 80 paid calls instead of 24. The memoryless agent buys from the
+cheapest sticker price every time, which is not a strawman: it is the only
+rational policy available with no purchase history.
+
+Those figures are generated, never typed. `python tools/report.py` rewrites
+`RESULTS.md` from an actual run, and `RESULTS.md` is authoritative if this
+table ever drifts.
+
+**The core function is not degraded, it is absent.** Delete the memory and the
+router has no record of what it bought; on every fresh start it pays the same
+failing provider again, and the spend the agent exists to avoid comes back in
+full.
 
 ## Paying for real: what the live adapter does and does not prove
 
@@ -78,6 +124,7 @@ header *before* anything is signed, because there is no refund. A second,
 independent per-call ceiling is enforced inside the JS client.
 
 ## Cold-start recall, across two processes
+<a id="cold-start-recall-across-two-processes"></a>
 
     python tools/session.py --db ./demo.db --phase learn
     python tools/session.py --db ./demo.db --phase recall
