@@ -53,10 +53,26 @@ Verified 2026-09-01, Python 3.12.13, macOS. Raw output in `probes/`.
 - Account tier is FREE, so `learn()`, `learner()`, `lint()` and the
   skill-proposal calls raise TierGateError. Do not call them.
 
+## Measured surface, x402.ochinimus.app
+
+Verified 2026-09-01. Challenges recorded verbatim in `tests/fixtures/`.
+
+- unpaid GET returns 402, body `{}`, quote base64 in the `payment-required`
+  HEADER, never the body. x402Version 2, one `accepts[]` entry per rail.
+- Base rail `eip155:8453`, asset `0x8335..2913`, payTo `0x22DB..76e6`, `amount`
+  a decimal STRING in USDC base units at 6dp. Parsed as int, never float.
+- the origin is behind Cloudflare, which answers the default
+  `Python-urllib/3.12` User-Agent with **403 and no challenge header** — not
+  402. Send a named User-Agent or every endpoint reads as down.
+- success envelope is `{tool, data, paid}`, measured on the one free endpoint
+  `/api/fear-greed`. `/pricing` and the forecast free tasters are 404 on HTTP;
+  they exist on the MCP rail only.
+
 ## State as of commit 370c162
 
-26 tests green. Working: memory layer, router, deletion-test harness, trace
-tool, generated RESULTS.md, packaging, public repo, cold-start recall demo.
+77 tests green. Working: memory layer, router, deletion-test harness, trace
+tool, generated RESULTS.md, packaging, public repo, cold-start recall demo,
+x402 discovery adapter (stage 1; payment gated off).
 
 Measured result, `default_fleet`, 20 payloads: 0.00555 USDC per payload with
 memory against 0.01200 without. 24 calls against 80. 53.75% of spend recovered.
@@ -78,6 +94,11 @@ payload, from buy 9. That is where `tools/session.py --phase learn` stops.
 - `cassum/ablate.py` — deletion test as code, NullStore vs real Store
 - `tools/session.py` — the gate beat: `--phase learn` then `--phase recall`,
   two processes, one db, recall spends nothing
+- `cassum/x402.py` — real paid provider, same interface as `sim.SimProvider`.
+  Discovery is live and tested; `fetch()` refuses because signing is not built
+- `tools/quote.py` — prices endpoints off the 402 header, `--live` gates payment
+- `tools/record_402.py` — the ONLY thing that touches the network. Writes
+  `tests/fixtures/`, which is what the suite parses
 - `tools/trace.py` — prints the routing decision sequence
 - `tools/report.py` — generates RESULTS.md from runs
 - `probes/` — capability probes and JSON reports
@@ -85,12 +106,26 @@ payload, from buy 9. That is where `tools/session.py --phase learn` stops.
 
 ## Still to build, in order
 
-1. A real x402 provider adapter behind the same interface as `sim.SimProvider`.
-   BLOCKED: waiting on which live endpoints are in scope. Do not invent any.
+1. x402 STAGE 2, settlement. BLOCKED ON A DECISION, not on code: which signer,
+   which rail, and what spend cap. `X402Provider.fetch()` raises
+   `PaymentNotImplemented` naming the three missing pieces. Do not implement
+   signing without Sergiu saying so — it spends real treasury USDC.
 2. README section pointing at the memory call sites by file and function.
-   Should also document the two `tools/session.py` commands, which the README
-   does not mention yet.
+   Should also document `tools/session.py` and `tools/quote.py`, which the
+   README does not mention yet.
 3. Video, 2 to 5 minutes. Two build-in-public posts tagging @sibylcap.
+
+DONE: x402 STAGE 1, discovery. `quote()` prices an endpoint off its own 402
+challenge; the Router's `.price` comes from there and never from a constant,
+pinned by `test_price_is_derived_from_the_challenge_not_from_config`.
+`delivered` is decided by a per-endpoint usability predicate, each written
+against the SERVER SOURCE and citing it — agentfeed `tools/liqdb.js`,
+`answer.js`, caliper `lib/answer.mjs`. The reference case is
+get_cascade_forecast, which returns 200 with `evidence: "unmeasured"` when
+history is thin; `absent` counts as delivery and `unmeasured` does not, because
+caliper's own comment says collapsing those two would be a lie. Suite is
+offline: `tests/test_x402.py` blocks `urlopen` for the whole module and proves
+the block works.
 
 DONE, commit 370c162: `tools/session.py`. Filmed as two runs of
 `python tools/session.py --db ./demo.db --phase learn|recall`. Learn settles

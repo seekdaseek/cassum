@@ -1,0 +1,20 @@
+{
+  "_note": "verbatim 402 challenge. regenerate with tools/record_402.py.",
+  "_recorded_from": "https://x402.ochinimus.app/api/sol-price",
+  "body": "{}",
+  "headers": {
+    "alt-svc": "h3=\":443\"; ma=86400",
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a3437805cfb4e3e9-OTP",
+    "connection": "close",
+    "content-length": "2",
+    "content-type": "application/json; charset=utf-8",
+    "date": "Tue, 01 Sep 2026 10:07:35 GMT",
+    "etag": "W/\"2-vyGp6PvFo4RvsFtPoIWeCReyIC8\"",
+    "nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+    "payment-required": "eyJ4NDAyVmVyc2lvbiI6MiwiZXJyb3IiOiJQYXltZW50IHJlcXVpcmVkIiwicmVzb3VyY2UiOnsidXJsIjoiaHR0cHM6Ly94NDAyLm9jaGluaW11cy5hcHAvYXBpL3NvbC1wcmljZSIsImRlc2NyaXB0aW9uIjoiU09MIHNwb3QgcHJpY2UgKG11bHRpLXNvdXJjZTogQ29pbmJhc2UsIEtyYWtlbiwgUHl0aCBIZXJtZXMgZmFsbGJhY2spIiwibWltZVR5cGUiOiIiLCJzZXJ2aWNlTmFtZSI6IkFnZW50RmVlZCIsInRhZ3MiOlsiY3J5cHRvIiwicHJpY2UiLCJzb2xhbmEiLCJzcG90Il19LCJhY2NlcHRzIjpbeyJzY2hlbWUiOiJleGFjdCIsIm5ldHdvcmsiOiJzb2xhbmE6NWV5a3Q0VXNGdjhQOE5KZFRSRXBZMXZ6cUtxWkt2ZHAiLCJhbW91bnQiOiIxMDAwIiwiYXNzZXQiOiJFUGpGV2RkNUF1ZnFTU3FlTTJxTjF4enliYXBDOEc0d0VHR2tad3lURHQxdiIsInBheVRvIjoiNGE4bzQ1c2tSUGN5akFkeVI4eUVTMjE1U3d2aDh1VHBaRDZLTGFyaHhDSjciLCJtYXhUaW1lb3V0U2Vjb25kcyI6MzAwLCJleHRyYSI6eyJmZWVQYXllciI6IkJFTnJMb1VibmR4b05NVVM1SlhBcEdNdE55a0xqRlhYaXhNdHBEd0RSOVNQIn19LHsic2NoZW1lIjoiZXhhY3QiLCJuZXR3b3JrIjoiZWlwMTU1Ojg0NTMiLCJhbW91bnQiOiIxMDAwIiwiYXNzZXQiOiIweDgzMzU4OWZDRDZlRGI2RTA4ZjRjN0MzMkQ0ZjcxYjU0YmRBMDI5MTMiLCJwYXlUbyI6IjB4MjJEQjNBOTY4NkVFNTI2MWU3QmYzZWQ0ZjkxMjc3MjMyRTgwNzZlNiIsIm1heFRpbWVvdXRTZWNvbmRzIjozMDAsImV4dHJhIjp7Im5hbWUiOiJVU0QgQ29pbiIsInZlcnNpb24iOiIyIn19XSwiZXh0ZW5zaW9ucyI6eyJiYXphYXIiOnsiaW5mbyI6eyJpbnB1dCI6eyJ0eXBlIjoiaHR0cCIsInF1ZXJ5UGFyYW1zIjp7fSwibWV0aG9kIjoiR0VUIn19LCJzY2hlbWEiOnsiJHNjaGVtYSI6Imh0dHBzOi8vanNvbi1zY2hlbWEub3JnL2RyYWZ0LzIwMjAtMTIvc2NoZW1hIiwidHlwZSI6Im9iamVjdCIsInByb3BlcnRpZXMiOnsiaW5wdXQiOnsidHlwZSI6Im9iamVjdCIsInByb3BlcnRpZXMiOnsidHlwZSI6eyJ0eXBlIjoic3RyaW5nIiwiY29uc3QiOiJodHRwIn0sIm1ldGhvZCI6eyJ0eXBlIjoic3RyaW5nIiwiZW51bSI6WyJHRVQiXX0sInF1ZXJ5UGFyYW1zIjp7InR5cGUiOiJvYmplY3QiLCJwcm9wZXJ0aWVzIjp7fX19LCJyZXF1aXJlZCI6WyJ0eXBlIiwibWV0aG9kIl0sImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjpmYWxzZX19LCJyZXF1aXJlZCI6WyJpbnB1dCJdfX19fQ==",
+    "report-to": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=pjkm6MIBb2fm%2B4LsEYVRWzFO2qplrH1hw14yyVwsoRgQeH00sHKARgLmeKhI5lkgDFu1gEZtZeXlnadO3CQgEBoX3akjv8UWuL7S6AzFYN4AdrCMqQLuZYbLM7i3vtl38cKq9wSNFfTsL87cT3CeP2Y%3D\"}]}",
+    "server": "cloudflare"
+  },
+  "status": 402
+}
