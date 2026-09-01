@@ -154,10 +154,56 @@ expansion registration: `tvl`, `squeeze-score` and `venue-liq-share` are all
 registered through the same `expansion.js` loop that builds `PRICES_ADD`
 uniformly. Not transient: it failed on both attempts, minutes apart.
 
-That leaves something specific to this route at settlement time, on the server.
-It is the only tool whose handler dynamically imports caliper's ESM modules
-from `/opt/caliper` and opens a second SQLite handle, which is where to look
-first. Not diagnosable further from this machine.
+### ROOT CAUSE: the CDP facilitator rejects the payload, and the only field
+### that differs is a 683-character description
+
+The 402 the client finally sees carries the real reason in its own
+`payment-required` header:
+
+    Facilitator verify failed (400): {"errorLink":
+      "https://docs.cdp.coinbase.com/api-reference/v2/errors#invalid-request",
+      "errorMessage":"'paymentPayload' is invalid: must match one of [x402V2Pay...
+
+So the server is not refusing the payment. It relays the payment to the CDP
+facilitator's `/verify`, which answers HTTP 400, and the middleware turns that
+into a fresh 402. The server's own logs show nothing because nothing failed
+there. My earlier guess -- the caliper import and the second SQLite handle --
+was wrong: the handler is never reached.
+
+Cloudflare is not involved either. Through an SSH tunnel straight to the origin
+on `localhost:3006`, bypassing Cloudflare entirely, `/api/sol-price` settles
+(the control, so the tunnel test is valid) and `/api/cascade-forecast` still
+returns 402.
+
+Diffing a working challenge against the failing one structurally, the EVM rail
+entries are IDENTICAL -- same keys, same `extra`, same asset, same payTo. Only
+three resource fields differ, and two of them are eliminated by the data:
+
+| endpoint | desc chars | tags | outcome |
+|---|---:|---:|---|
+| `/api/sol-price` | 69 | 4 | settles |
+| `/api/tvl` | 89 | 4 | settles |
+| `/api/liquidations` | 129 | 5 | settles |
+| `/api/venue-liq-share` | 151 | 4 | settles |
+| `/api/squeeze-score` | 237 | **6** | settles |
+| `/api/cascade-forecast` | **683** | 5 | **402** |
+
+Tag count is not it: `squeeze-score` carries SIX tags and settles while
+`cascade-forecast` carries five and does not. `resource.url` differs by one
+character. That leaves the description, at 683 characters against a
+largest-working 237.
+
+LEADING HYPOTHESIS, NOT YET PROVEN: the facilitator enforces a length bound on
+a field inside `paymentPayload`, and this description exceeds it. It cannot be
+proven from the client, because the description is chosen by the server and is
+not something a payer can shorten. The confirming test is a one-line server
+change -- shorten `get_cascade_forecast`'s `desc` in `expansion.js` to roughly
+200 characters, redeploy, retry -- and it has NOT been made, because that is a
+production change on a live paid service.
+
+The description is a published string rendered into `GET /`, the well-known
+document and the landing page, so shortening it is a product decision as well
+as a fix.
 
 CONSEQUENCE FOR CASSUM: the reference case for the whole usability predicate
 cannot currently be measured live. Its decline behaviour is still pinned
