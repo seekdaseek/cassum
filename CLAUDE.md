@@ -79,6 +79,17 @@ Verified 2026-09-01. Challenges recorded verbatim in `tests/fixtures/`.
   `validateFacilitatorCapabilities()` does NOT enforce this at boot — it does
   `if (!supportedKind) continue`. agentfeed payments.js:102 claims boot fails
   loudly; it does not. The throw happens at requirements-building time.
+- A LONG `resource.description` MAKES AN ENDPOINT UNPAYABLE. Bisected over
+  seven redeploys against the live CDP facilitator: desc 487 chars (challenge
+  header 2268 B) settles, 515 chars (2308 B) does not. The facilitator rejects
+  the paymentPayload with HTTP 400, agentfeed relays it as a fresh 402, and the
+  route's handler is never reached. Invisible from curl. FIXED AT THE BOUNDARY
+  in `/opt/agentfeed/payments.js` only: `challengeDesc()` trims to 256 chars
+  when building the challenge; `GET /`, `/.well-known/x402.json`, the landing
+  page and the MCP tool defs still serve the full text. Backup
+  `payments.js.bak-desctrunc-20260901-132211`. Two of 44 endpoints are trimmed
+  today (get_cascade_forecast 683, get_liq_history 284); all 44 verified to
+  still issue a valid, correctly-priced challenge on both rails.
 - FIRST LIVE SETTLEMENT FROM CASSUM, 2026-09-01, verified on basescan:
   `0x1f99b069600f32d890c710b3e8894e415cbe039c6e102750c28d7c9866a580cf`
   0.001 USDC, block 50738445, `/api/sol-price`, delivered=True by the usability
@@ -142,7 +153,17 @@ payload, from buy 9. That is where `tools/session.py --phase learn` stops.
 
 ## Still to build, in order
 
-1. THE MEASUREMENT RUN. BLOCKED ON FUNDS, not code. `tools/measure.py` is
+1. EXTEND THE MEASUREMENT. First run is DONE but small and its decline branch
+   is untested: 15 paid calls, 0.101 USDC, and every single one delivered, so
+   the measured empty rate is 0.0000 everywhere. That does NOT corroborate
+   `default_fleet` -- on this evidence the live fleet looks like `flat_fleet`.
+   `liquidations` was sampled 5 times against a 7-symbol rotation in blocked
+   order, so the two unlisted symbols meant to return an empty set were never
+   reached; LIQ_SYMBOLS is now interleaved so a rerun hits them early.
+   Purchases ACCUMULATE, so a further run extends the same rows. Roughly 0.19
+   USDC more buys cascade-forecast x10 as originally planned.
+
+OLD, kept for the record: THE MEASUREMENT RUN. BLOCKED ON FUNDS, not code. `tools/measure.py` is
    built and its pre-flight refuses to start: the plan costs 0.2180 USDC and
    the payer holds 0.028000, short 0.1900. A run that dies halfway leaves a
    half-measured empty_rate that reads like a real one, so it refuses rather

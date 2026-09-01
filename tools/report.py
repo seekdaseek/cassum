@@ -89,10 +89,35 @@ def live_block(db: Path | None) -> list[str]:
         "for `cascade-forecast` that is the by-design decline when a symbol's",
         "history is too thin to answer from.",
         "",
+    ]
+    if empty == 0:
+        out += [
+            "**NO DISPERSION WAS OBSERVED.** Every one of these calls delivered, so",
+            "the measured empty rate is 0.0000 everywhere and these endpoints are, on",
+            "this evidence, indistinguishable to the router. That is a real result and",
+            "it does NOT corroborate the simulated table above: `default_fleet`'s",
+            "dispersion remains a chosen model that this run did not find in the wild.",
+            "On these numbers alone the live fleet resembles `flat_fleet`, where memory",
+            "is overhead.",
+            "",
+            "The sample is small and the reason is budget, not choice. It is also",
+            "incomplete in a specific way: `liquidations` was sampled 5 times against a",
+            "7-symbol rotation, so the two unlisted symbols that were expected to return",
+            "an empty set were never reached. The decline branch of the predicate is",
+            "therefore still unexercised live. Purchases accumulate, so a further run",
+            "extends these same rows rather than replacing them.",
+            "",
+        ]
+    else:
+        out += [
+            f"**Dispersion WAS observed:** {empty} of {calls} paid calls returned",
+            "nothing usable, and the rates above differ between endpoints. That is the",
+            "signal the router ranks on, measured rather than assumed.",
+            "",
+        ]
+    out += [
         "**These numbers cannot be turned into a saving.** The payee is a treasury",
-        "this project controls, so the cost side is not arm's length. What they do",
-        "establish is that the empty rates the router learns from are real, and",
-        "that the simulated dispersion above is a model of something that exists.",
+        "this project controls, so the cost side is not arm's length.",
         "",
     ]
     return out

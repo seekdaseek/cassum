@@ -36,15 +36,39 @@ REPO = Path(__file__).resolve().parent.parent
 # symbol's history is thin, so the symbol mix IS the measurement: majors have
 # deep tape and should answer, obscure perps should decline. A run of nothing
 # but SOLUSDT would report a 0% empty rate and prove nothing about the predicate.
+# Interleaved, not blocked: a run cut short by budget must still have sampled
+# both kinds. Blocking majors first would report a 0% empty rate for any run
+# that stopped early.
 FORECAST_SYMBOLS = [
-    "SOL", "BTC", "ETH", "XRP", "DOGE",          # deep tape, expect measured
-    "SXT", "ZEREBRO", "GOAT", "MOODENG", "PNUT",  # thin tape, expect declines
+    "SOL", "SXT", "BTC", "ZEREBRO", "ETH",
+    "GOAT", "XRP", "MOODENG", "DOGE", "PNUT",
 ]
 
+# MEASURED: /api/liquidations answers even for obscure perps (ZEREBROUSDT
+# returned 25 prints), so the empty case needs genuinely quiet or unlisted
+# symbols. A buyer scanning a token list hits exactly these, and the empty
+# result set is what the usability predicate must catch.
+# Interleaved for the same reason as FORECAST_SYMBOLS, and it was NOT the first
+# time round: a 5-call run against this list in blocked order never reached the
+# unlisted symbols at indices 5 and 6, so the empty case went untested and the
+# run reported a 0% empty rate it had not earned.
+LIQ_SYMBOLS = [
+    "SOLUSDT",            # deep tape, expect delivery
+    "NOSUCHCOINUSDT",     # unlisted, expect an empty set
+    "BTCUSDT",
+    "PLACEHOLDER1USDT",   # unlisted
+    "ZEREBROUSDT",        # thin but listed
+    "ETHUSDT",
+    "MOODENGUSDT",
+]
+
+# Sample counts are what the remaining budget affords, not what is ideal.
+# Purchases ACCUMULATE in the store, so a later run with more funds extends
+# these same provider records rather than starting over.
 DEFAULT_PLAN = [
-    ("/api/cascade-forecast", 10),   # the reference case, sampled hardest
+    ("/api/cascade-forecast", 4),    # the reference case, priced at 0.02 each
+    ("/api/liquidations", 5),
     ("/api/sol-price", 6),
-    ("/api/liquidations", 4),
 ]
 
 
@@ -66,6 +90,8 @@ def sampled_path(path: str, i: int) -> str:
     The query never reaches the provider name -- see route_of()."""
     if path == "/api/cascade-forecast":
         return f"{path}?symbol={FORECAST_SYMBOLS[i % len(FORECAST_SYMBOLS)]}"
+    if path == "/api/liquidations":
+        return f"{path}?symbol={LIQ_SYMBOLS[i % len(LIQ_SYMBOLS)]}"
     return path
 
 
