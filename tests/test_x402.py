@@ -458,6 +458,32 @@ def test_the_cap_comes_from_one_env_var_with_a_documented_default():
         SpendCap.from_env({CAP_ENV: "-1"})
 
 
+def test_an_amount_the_bridge_could_not_determine_is_not_guessed():
+    """MEASURED 2026-09-01: the EVM bridge reported paidUsd 0.05 for a 0.003
+    call, because it fell back to --max-usd, which is a CEILING and not a price.
+    The chain charged 0.003. A wrong usdc_spent goes straight into memory and
+    effective_cost divides by it, so an undetermined amount must refuse."""
+    bridge = FakeBridge({"ok": True, "status": 200, "data": forecast("measured", 0.3),
+                         "paidUsd": None, "settlement": {"transaction": "0xabc"},
+                         "spentUsd": 0, "payer": "0x", "error": None})
+    p = provider(live=True, cap=SpendCap(1.0), bridge=bridge)
+    with pytest.raises(BridgeError, match="could not determine the amount"):
+        p.fetch()
+    assert p.cap.spent == 0.0
+
+
+def test_a_charge_above_the_quote_is_refused():
+    """The quote came off the payment-required header. Anything larger means the
+    two disagree, and recording it would understate the endpoint's real cost."""
+    bridge = FakeBridge({"ok": True, "status": 200, "data": forecast("measured", 0.3),
+                         "paidUsd": 0.05, "settlement": {"transaction": "0xabc"},
+                         "spentUsd": 0, "payer": "0x", "error": None})
+    p = provider(live=True, cap=SpendCap(1.0), bridge=bridge)   # quoted at 0.02
+    with pytest.raises(BridgeError, match="exceeds its quote"):
+        p.fetch()
+    assert p.cap.spent == 0.0
+
+
 def test_a_bridge_failure_raises_rather_than_inventing_an_empty():
     """plugin service.ts returns early on a non-2xx without reporting paidUsd,
     so spend is genuinely unknown. Recording (False, 0.0) would understate cost

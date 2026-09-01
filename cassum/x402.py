@@ -760,7 +760,21 @@ class X402Provider:
                 f"error={result.get('error')}"
             )
 
-        paid = float(result.get("paidUsd") or 0.0)
+        reported = result.get("paidUsd")
+        if reported is None:
+            # The bridge settled but could not establish the amount. Guessing it
+            # would write a fabricated usdc_spent that effective_cost then
+            # divides by, so refuse the data point instead.
+            raise BridgeError(
+                f"{self.name}: settled but the bridge could not determine the amount "
+                "charged, so no purchase is recorded. Check the payer."
+            )
+        paid = float(reported)
+        if paid > quoted:
+            raise BridgeError(
+                f"{self.name}: bridge reports {paid} USDC paid but the challenge "
+                f"quoted {quoted}. Refusing to record a purchase that exceeds its quote."
+            )
         self.cap.record(paid)
         self.settlement = result.get("settlement")
         delivered = self.decide(result.get("data"))

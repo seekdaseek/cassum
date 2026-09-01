@@ -129,3 +129,61 @@ by the function that throws, **the configured facilitator demonstrably supports
 EVM exact-scheme on Base.** That is what makes the Base rail payable. It was
 established from source plus one observed 402, not from documentation.
 
+## 12. `/api/cascade-forecast` quotes a price it will not accept payment for
+
+MEASURED 2026-09-01 on Base, `@seekdaseek/x402-wallet` payer. The endpoint
+issues a correct, correctly-priced 402 challenge on both rails, but the paid
+retry comes back 402 again with the unpaid body `{}`. Nothing settles and
+nothing is charged -- the payer's balance does not move.
+
+Everything else tested settles on the first attempt:
+
+| endpoint | price | result |
+|---|---:|---|
+| `/api/sol-price` | 0.001 | 200, settled |
+| `/api/liquidations` | 0.003 | 200, settled |
+| `/api/tvl` | 0.005 | 200, settled |
+| `/api/venue-liq-share` | **0.02** | 200, settled |
+| `/api/squeeze-score` | 0.1 | 200, settled |
+| `/api/cascade-forecast` | **0.02** | **402, twice** |
+
+The variables are eliminated rather than assumed. Not the price:
+`venue-liq-share` is the same 0.02. Not the query string: `/api/sol-price?x=1`
+settles. Not the client spend cap: raising it to 0.05 changes nothing. Not the
+expansion registration: `tvl`, `squeeze-score` and `venue-liq-share` are all
+registered through the same `expansion.js` loop that builds `PRICES_ADD`
+uniformly. Not transient: it failed on both attempts, minutes apart.
+
+That leaves something specific to this route at settlement time, on the server.
+It is the only tool whose handler dynamically imports caliper's ESM modules
+from `/opt/caliper` and opens a second SQLite handle, which is where to look
+first. Not diagnosable further from this machine.
+
+CONSEQUENCE FOR CASSUM: the reference case for the whole usability predicate
+cannot currently be measured live. Its decline behaviour is still pinned
+offline against the server source in `tests/test_x402.py`, but no live
+`empty_rate` for it exists, and none should be invented.
+
+## 13. OUR BUG: the EVM bridge reported the spend CAP as the amount paid
+
+`tools/pay_bridge_evm.mjs` fell back to `--max-usd` when the settlement payload
+carried no `amountUsd`, which this facilitator never sends. `--max-usd` is a
+CEILING, not a price, and the two are equal only by coincidence -- in
+`tools/measure.py` they happen to match, which is exactly why this survived
+review and only surfaced under a hand-run call.
+
+MEASURED: a `/api/liquidations` call run with `--max-usd 0.05` reported
+`paidUsd: 0.05`. The chain charged **0.003**
+(`0x6d3620549f476e1ba07ac963e6e242c743d0281f6743083b96072ae76fd88ba7`).
+
+That number goes straight into `usdc_spent` in the provider record, and
+`Router.effective_cost` divides by it. A 16x overstatement would have made a
+good provider look catastrophically expensive and condemned it.
+
+Fixed: the bridge now reads the challenge itself, unpaid, and reports the
+actual quoted amount; when it cannot establish one it reports `null` and the
+Python side REFUSES to record the purchase rather than guessing. A charge above
+the quote is refused too. Pinned by
+`test_an_amount_the_bridge_could_not_determine_is_not_guessed` and
+`test_a_charge_above_the_quote_is_refused`.
+
