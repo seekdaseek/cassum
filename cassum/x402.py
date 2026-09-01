@@ -111,18 +111,24 @@ class RailBridge:
 
     @property
     def hint(self) -> str:
-        if self.name == "base":
-            return "Point it at the @seekdaseek/x402-wallet checkout."
-        return "Point it at a directory where @seekdaseek/plugin-agentfeed is installed."
+        if self.name == "solana-plugin":
+            return "Point it at a directory where @seekdaseek/plugin-agentfeed is installed."
+        return "Point it at the @seekdaseek/x402-wallet checkout."
 
 
 SETTLEMENT_RAILS: dict[str, RailBridge] = {
-    # cwd matters: the plugin is resolved as a bare specifier from there.
-    "solana": RailBridge("solana", SOLANA_RAIL_PREFIX, _TOOLS / "pay_bridge.mjs",
-                         "CASSUM_BRIDGE_DIR", dir_is_cwd=True),
-    # the wallet library is resolved by absolute path, so cwd is irrelevant.
+    # Both default bridges drive @seekdaseek/x402-wallet, resolved by absolute
+    # path, so cwd is irrelevant for either.
+    "solana": RailBridge("solana", SOLANA_RAIL_PREFIX, _TOOLS / "pay_bridge_svm.mjs",
+                         "CASSUM_WALLET_DIR", dir_is_cwd=False),
     "base": RailBridge("base", BASE_RAIL, _TOOLS / "pay_bridge_evm.mjs",
                        "CASSUM_WALLET_DIR", dir_is_cwd=False),
+    # The published elizaOS client, kept as a separate rail because it is what
+    # real Solana buyers actually run. It is installed NOWHERE on this machine,
+    # so this rail cannot be used until `npm i @seekdaseek/plugin-agentfeed`.
+    # cwd matters here: the plugin is resolved as a bare specifier from there.
+    "solana-plugin": RailBridge("solana-plugin", SOLANA_RAIL_PREFIX, _TOOLS / "pay_bridge.mjs",
+                                "CASSUM_BRIDGE_DIR", dir_is_cwd=True),
 }
 
 RAIL_ENV = "CASSUM_RAIL"

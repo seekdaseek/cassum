@@ -49,6 +49,16 @@ All 44 endpoints re-verified afterwards.
 *Cost:* ~0.19 USDC across the diagnosis and bisection. The endpoint had been
 unbuyable for its entire life; it is AgentFeed's flagship exclusive.
 
+*Both rails, checked:* `resource.description` is a single top-level field in
+the challenge, shared by every entry in `accepts[]` — neither rail carries its
+own — so `challengeDesc()` covers Solana and Base by construction. Confirmed by
+payment, not by that argument alone: `/api/cascade-forecast` settles on the SVM
+rail for 0.02 USDC, transaction
+`3fMsw8mYLn5s6WXqMK4Gh69eF7uWjX79wKd1Z4TyU9zUTz4q6RwZFG9iFwqsJNtLDskmpPASEijgpaHz9D3o6ffg`,
+slot 443442646, with `/api/sol-price` paid first on the same rail as a control.
+Whether SVM was ALSO broken before the fix is a separate question and was not
+asked of the live service; answering it needs one more A/B redeploy.
+
 ### 2. Cloudflare answers the default Python User-Agent with 403 and no challenge
 
 `Python-urllib/3.12` gets **403 with no `payment-required` header at all** —

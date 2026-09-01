@@ -136,8 +136,11 @@ payload, from buy 9. That is where `tools/session.py --phase learn` stops.
 - `cassum/x402.py` — real paid provider, same interface as `sim.SimProvider`.
   Discovery is live and tested; `fetch()` refuses because signing is not built
 - `tools/quote.py` — prices endpoints off the 402 header, `--live` gates payment
-- `tools/pay_bridge.mjs` — Solana settlement. Node, shells out to
-  @seekdaseek/plugin-agentfeed. Python never reads the private key
+- `tools/pay_bridge_svm.mjs` — Solana settlement via @seekdaseek/x402-wallet.
+  This is what `CASSUM_RAIL=solana` uses. Key file named by SOLANA_PAYER
+- `tools/pay_bridge.mjs` — Solana via the PUBLISHED elizaOS plugin, rail
+  `solana-plugin`. Installed NOWHERE on this machine; needs
+  `npm i @seekdaseek/plugin-agentfeed` before it can run
 - `tools/pay_bridge_evm.mjs` — Base settlement. Shells out to
   @seekdaseek/x402-wallet. Key read from a FILE named by EVM_PAYER
 - `tools/measure.py` — samples live endpoints round-robin to measure REAL

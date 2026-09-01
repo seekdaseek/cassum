@@ -562,6 +562,7 @@ def test_the_rail_defaults_to_solana_and_switches_on_one_env_var():
     a side effect of upgrading this package."""
     assert rail_from_env({}).name == "solana"
     assert rail_from_env({RAIL_ENV: "base"}).name == "base"
+    assert rail_from_env({RAIL_ENV: "solana-plugin"}).name == "solana-plugin"
     assert rail_from_env({RAIL_ENV: "BASE"}).name == "base"
     with pytest.raises(BridgeError, match="not a known rail"):
         rail_from_env({RAIL_ENV: "ethereum"})
@@ -569,14 +570,25 @@ def test_the_rail_defaults_to_solana_and_switches_on_one_env_var():
 
 def test_each_rail_names_its_own_bridge_and_directory():
     solana, base = SETTLEMENT_RAILS["solana"], SETTLEMENT_RAILS["base"]
-    assert solana.script.name == "pay_bridge.mjs"
+    plugin = SETTLEMENT_RAILS["solana-plugin"]
+    assert solana.script.name == "pay_bridge_svm.mjs"
     assert base.script.name == "pay_bridge_evm.mjs"
-    assert solana.script.exists() and base.script.exists()
-    assert solana.dir_env == "CASSUM_BRIDGE_DIR"
-    assert base.dir_env == "CASSUM_WALLET_DIR"
+    assert plugin.script.name == "pay_bridge.mjs"
+    assert all(r.script.exists() for r in (solana, base, plugin))
+    assert solana.dir_env == base.dir_env == "CASSUM_WALLET_DIR"
+    assert plugin.dir_env == "CASSUM_BRIDGE_DIR"
     # cwd matters only where the payer is resolved as a bare specifier.
-    assert solana.dir_is_cwd is True
-    assert base.dir_is_cwd is False
+    assert solana.dir_is_cwd is False and base.dir_is_cwd is False
+    assert plugin.dir_is_cwd is True
+
+
+def test_both_solana_rails_settle_on_an_svm_network():
+    """Two clients, one rail. `solana` drives x402-wallet, `solana-plugin`
+    drives the published elizaOS client; both must pick the SVM accepts entry."""
+    for name in ("solana", "solana-plugin"):
+        p = provider(live=True, cap=SpendCap(1.0), rail=name)
+        assert p.settlement_rail().network.startswith("solana:")
+        assert p.rail.network == "solana:"
 
 
 def test_the_bridge_is_selected_by_rail_not_hardcoded():
@@ -625,25 +637,41 @@ def test_the_bridge_is_told_the_per_call_ceiling():
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not on PATH")
-def test_the_real_bridge_honours_its_json_contract(tmp_path, monkeypatch):
+def test_the_real_plugin_bridge_honours_its_json_contract(tmp_path, monkeypatch):
     """End to end into the actual Node script, WITHOUT spending: an empty
     directory cannot resolve @seekdaseek/plugin-agentfeed, so the bridge fails
     at import and can never reach a signer. What is under test is that its
     one-line JSON contract survives the process boundary."""
     monkeypatch.setenv("CASSUM_BRIDGE_DIR", str(tmp_path))
     monkeypatch.setenv("AGENTFEED_PRIVATE_KEY", "not-a-real-key-and-never-parsed")
-    p = provider(live=True, cap=SpendCap(1.0))
+    p = provider(live=True, cap=SpendCap(1.0), rail="solana-plugin")
     with pytest.raises(BridgeError, match="cannot resolve"):
+        p.fetch()
+    assert p.cap.spent == 0.0
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not on PATH")
+@pytest.mark.parametrize("rail", ["solana", "base"])
+def test_the_wallet_bridges_honour_the_same_json_contract(tmp_path, monkeypatch, rail):
+    """Same, for the two x402-wallet bridges. An empty directory holds no payer
+    key, so each refuses before it loads a signer."""
+    monkeypatch.setenv("CASSUM_WALLET_DIR", str(tmp_path))
+    monkeypatch.delenv("EVM_PAYER", raising=False)
+    monkeypatch.delenv("SOLANA_PAYER", raising=False)
+    p = provider(live=True, cap=SpendCap(1.0), rail=rail)
+    with pytest.raises(BridgeError, match="no payer key"):
         p.fetch()
     assert p.cap.spent == 0.0
 
 
 def test_live_fetch_without_a_bridge_directory_fails_loudly():
     """No silent fallback to some other install. If the operator has not said
-    where the payer lives, nothing is signed."""
-    p = provider(live=True, cap=SpendCap(1.0))
+    where the payer lives, nothing is signed -- and each rail names ITS OWN
+    directory variable, so the operator is told which one is missing."""
+    with pytest.raises(BridgeError, match="CASSUM_WALLET_DIR"):
+        provider(live=True, cap=SpendCap(1.0), rail="solana").fetch()
     with pytest.raises(BridgeError, match="CASSUM_BRIDGE_DIR"):
-        p.fetch()
+        provider(live=True, cap=SpendCap(1.0), rail="solana-plugin").fetch()
 
 
 def test_discovery_works_with_payment_off():
