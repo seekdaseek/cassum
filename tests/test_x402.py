@@ -23,7 +23,10 @@ from cassum.x402 import (
     CAP_ENV,
     BridgeError,
     CapExceeded,
+    RAIL_ENV,
+    SETTLEMENT_RAILS,
     SpendCap,
+    rail_from_env,
     FIXTURE_DIR,
     PaymentNotImplemented,
     Quote,
@@ -334,9 +337,11 @@ class FakeBridge:
     def __init__(self, result: dict):
         self.result = result
         self.calls: list[tuple[str, float]] = []
+        self.rails: list[str | None] = []
 
-    def __call__(self, path: str, *, max_per_call: float, **kw) -> dict:
+    def __call__(self, path: str, *, max_per_call: float, rail=None, **kw) -> dict:
         self.calls.append((path, max_per_call))
+        self.rails.append(getattr(rail, "name", rail))
         return self.result
 
 
@@ -451,14 +456,82 @@ def test_a_bridge_failure_raises_rather_than_inventing_an_empty():
     assert p.cap.spent == 0.0, "an unknown outcome must not move the ledger"
 
 
-def test_settlement_rail_is_solana_even_when_the_price_is_read_off_base():
-    """MEASURED in plugin src/service.ts: the payer is an SVM client and cannot
-    sign for Base. Pricing and settlement are therefore different rails, and
-    pretending otherwise is how a run gets signed against the wrong chain."""
-    p = provider(live=True, cap=SpendCap(1.0), bridge=FakeBridge(paid(forecast("measured", 0.3))))
+def test_pricing_and_settlement_are_separate_rails():
+    """A provider priced on Base settles on whichever rail the configured
+    bridge can sign. Conflating the two is how a run gets signed against the
+    wrong chain."""
+    p = provider(live=True, cap=SpendCap(1.0), rail="solana",
+                 bridge=FakeBridge(paid(forecast("measured", 0.3))))
     assert p.network == BASE_RAIL
     assert p.settlement_rail().network.startswith("solana:")
     assert p.settlement_rail().usdc == p.price, "both rails quote the same amount"
+
+
+def test_the_base_rail_settles_on_eip155():
+    p = provider(live=True, cap=SpendCap(1.0), rail="base",
+                 bridge=FakeBridge(paid(forecast("measured", 0.3))))
+    assert p.rail.name == "base"
+    assert p.settlement_rail().network == BASE_RAIL
+    assert p.settlement_rail().pay_to == BASE_PAY_TO
+
+
+def test_the_rail_defaults_to_solana_and_switches_on_one_env_var():
+    """Changing the chain money moves on must be a deliberate shell edit, never
+    a side effect of upgrading this package."""
+    assert rail_from_env({}).name == "solana"
+    assert rail_from_env({RAIL_ENV: "base"}).name == "base"
+    assert rail_from_env({RAIL_ENV: "BASE"}).name == "base"
+    with pytest.raises(BridgeError, match="not a known rail"):
+        rail_from_env({RAIL_ENV: "ethereum"})
+
+
+def test_each_rail_names_its_own_bridge_and_directory():
+    solana, base = SETTLEMENT_RAILS["solana"], SETTLEMENT_RAILS["base"]
+    assert solana.script.name == "pay_bridge.mjs"
+    assert base.script.name == "pay_bridge_evm.mjs"
+    assert solana.script.exists() and base.script.exists()
+    assert solana.dir_env == "CASSUM_BRIDGE_DIR"
+    assert base.dir_env == "CASSUM_WALLET_DIR"
+    # cwd matters only where the payer is resolved as a bare specifier.
+    assert solana.dir_is_cwd is True
+    assert base.dir_is_cwd is False
+
+
+def test_the_bridge_is_selected_by_rail_not_hardcoded():
+    bridge = FakeBridge(paid(forecast("measured", 0.3)))
+    provider(live=True, cap=SpendCap(1.0), rail="base", bridge=bridge).fetch()
+    assert bridge.rails == ["base"]
+
+
+def test_a_rail_the_challenge_does_not_offer_is_refused():
+    """If the server ever stops quoting a rail, the bridge for it must refuse
+    rather than sign against whatever is left."""
+    q = quote_from_fixture("/api/sol-price")
+    svm_only = Quote(path=q.path, resource_url=q.resource_url, description=q.description,
+                     tags=q.tags, x402_version=q.x402_version, raw=q.raw,
+                     rails=tuple(r for r in q.rails if r.network.startswith("solana:")))
+    p = X402Provider("/api/sol-price", quote_=svm_only, network="solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+                     live=True, rail="base", cap=SpendCap(1.0))
+    with pytest.raises(BridgeError, match="cannot pay it"):
+        p.settlement_rail()
+
+
+def test_live_base_fetch_without_a_wallet_directory_fails_loudly():
+    p = provider(live=True, cap=SpendCap(1.0), rail="base")
+    with pytest.raises(BridgeError, match="CASSUM_WALLET_DIR"):
+        p.fetch()
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not on PATH")
+def test_the_real_evm_bridge_honours_the_same_json_contract(tmp_path, monkeypatch):
+    """End to end into pay_bridge_evm.mjs WITHOUT spending: an empty directory
+    holds no payer key, so the bridge refuses before it loads a signer."""
+    monkeypatch.setenv("CASSUM_WALLET_DIR", str(tmp_path))
+    monkeypatch.delenv("EVM_PAYER", raising=False)
+    p = provider(live=True, cap=SpendCap(1.0), rail="base")
+    with pytest.raises(BridgeError, match="no payer key"):
+        p.fetch()
+    assert p.cap.spent == 0.0
 
 
 def test_the_bridge_is_told_the_per_call_ceiling():

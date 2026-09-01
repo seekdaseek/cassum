@@ -40,9 +40,20 @@ What a live run is for, and all it is for:
 2. **Real empty rates** — how often each sampled endpoint actually returns
    something usable, measured instead of chosen.
 
-Settlement is on **Solana**. The JS payer this repo shells out to is an SVM
-client and cannot sign for Base, though both rails are quoted and priced. See
-`FINDINGS.md` 8 to 10 for that and two other measured defects.
+Settlement runs on **either rail**, chosen by `CASSUM_RAIL` (default `solana`,
+so an upgrade never silently changes which chain money moves on). Pricing and
+settlement are separate: a provider priced on Base can be paid on Solana or the
+reverse, depending on which bridge is configured.
+
+| `CASSUM_RAIL` | Bridge | Signs with | Directory |
+|---|---|---|---|
+| `solana` | `tools/pay_bridge.mjs` | `@seekdaseek/plugin-agentfeed` | `CASSUM_BRIDGE_DIR` |
+| `base` | `tools/pay_bridge_evm.mjs` | `@seekdaseek/x402-wallet` | `CASSUM_WALLET_DIR` |
+
+**This repo contains no signing code.** Both bridges are thin translators: they
+hand a key read from a file to a library that already has a live mainnet
+settlement on its rail, and print one line of JSON back. See `FINDINGS.md` 8
+to 10 for three measured defects found along the way.
 
 Discovery spends nothing and needs no key:
 
@@ -52,8 +63,15 @@ Discovery spends nothing and needs no key:
 Payment is off unless asked for, and capped by one environment variable:
 
     export CASSUM_MAX_USDC=0.01        # cumulative ceiling for the whole run
+    export CASSUM_RAIL=base            # or solana, the default
+
+    # base rail
+    export CASSUM_WALLET_DIR=/path/to/x402-wallet
+    export EVM_PAYER=/path/to/payer-evm.key      # a FILE, read only by Node
+
+    # solana rail
     export CASSUM_BRIDGE_DIR=/path/to/a/dir/with/plugin-agentfeed/installed
-    export AGENTFEED_PRIVATE_KEY=...   # read by the Node bridge, never by Python
+    export AGENTFEED_PRIVATE_KEY=...             # read only by Node
 
 The cap is checked against the amount parsed from the `payment-required`
 header *before* anything is signed, because there is no refund. A second,

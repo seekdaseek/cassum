@@ -21,6 +21,8 @@ import sys
 from cassum.x402 import (
     BASE_RAIL,
     CAP_ENV,
+    RAIL_ENV,
+    SETTLEMENT_RAILS,
     BridgeError,
     CapExceeded,
     PaymentNotImplemented,
@@ -38,6 +40,10 @@ def main() -> int:
     ap.add_argument("--path", action="append", help="repeatable; defaults to the recorded set")
     ap.add_argument("--network", default=BASE_RAIL)
     ap.add_argument("--fixture", action="store_true", help="parse tests/fixtures instead of the network")
+    ap.add_argument(
+        "--rail", choices=sorted(SETTLEMENT_RAILS),
+        help=f"which bridge signs. Default ${RAIL_ENV}, else 'solana'.",
+    )
     ap.add_argument(
         "--live", action="store_true",
         help=f"SPENDS REAL USDC. Off by default. Ceiling is ${CAP_ENV}, default 0.05.",
@@ -61,7 +67,8 @@ def main() -> int:
         except (X402Error, OSError) as err:
             print(f"{path:<34} {'-':>8} {'-':>8}  ERROR: {err}")
             continue
-        p = X402Provider(path, quote_=q, live=args.live, network=args.network)
+        p = X402Provider(path, quote_=q, live=args.live, network=args.network,
+                         rail=args.rail)
         providers.append(p)
         rail = q.rail(args.network)
         print(f"{p.name:<34} {rail.amount_base_units:>8} {p.price:>8}  {','.join(q.tags[:4])}")
@@ -92,7 +99,8 @@ def main() -> int:
     print(f"  run ceiling   {cap.limit} USDC   (${CAP_ENV}, default 0.05)")
     print(f"  buying        {cheapest.name} at {cheapest.price} USDC")
     print(f"  priced on     {args.network}")
-    print(f"  SETTLING ON   {rail.network}   <- the JS payer is SVM-only, see FINDINGS.md")
+    print(f"  SETTLING ON   {rail.network}  via the {cheapest.rail.name} bridge")
+    print(f"  signer        {cheapest.rail.script.name}  (${cheapest.rail.dir_env})")
     print(f"  paying        {rail.pay_to}\n")
 
     cheapest.live = True

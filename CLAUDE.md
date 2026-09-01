@@ -67,11 +67,21 @@ Verified 2026-09-01. Challenges recorded verbatim in `tests/fixtures/`.
 - success envelope is `{tool, data, paid}`, measured on the one free endpoint
   `/api/fear-greed`. `/pricing` and the forecast free tasters are 404 on HTTP;
   they exist on the MCP rail only.
-- SETTLEMENT IS SOLANA-ONLY. `@seekdaseek/plugin-agentfeed` 0.1.2 src/service.ts
-  signs with `@solana/kit` / `toClientSvmSigner` / `ExactSvmScheme` and parses
-  its key with bs58. It CANNOT sign for Base. Both rails are quoted and priced
-  identically; only the SVM one can be paid. A Base run needs an EVM bridge
-  that does not exist — that is new signing code and needs Sergiu's go-ahead.
+- BOTH RAILS CAN BE PAID, via two different JS payers. `plugin-agentfeed` 0.1.2
+  is SVM-only (`@solana/kit`, `ExactSvmScheme`, bs58) — it cannot sign for Base.
+  Base goes through `@seekdaseek/x402-wallet` at
+  `/Volumes/D/skrproject/x402-wallet/x402-wallet` instead (viem signTypedData,
+  `@x402/evm` ExactEvmScheme). Selected by `CASSUM_RAIL`, default `solana`.
+- the CDP facilitator ACCEPTS EVM exact on Base. Proof from source, not docs:
+  `@x402/core` 2.18.0 `buildPaymentRequirements()` THROWS "Facilitator does not
+  support <scheme> on <network>" unless the facilitator's `/supported` lists it,
+  and the live service returns a 402 whose accepts[] contains eip155:8453. Note
+  `validateFacilitatorCapabilities()` does NOT enforce this at boot — it does
+  `if (!supportedKind) continue`. agentfeed payments.js:102 claims boot fails
+  loudly; it does not. The throw happens at requirements-building time.
+- x402-wallet has ALREADY settled both rails on mainnet against this service:
+  Solana `5XPKFW…WqM2`, Base `0xe49b8c…4a31` (0.001 USDC each). The payer holds
+  zero native gas on either chain; the facilitator sponsors it.
 - the payee is our own treasury on both rails (cj7 on Solana, 6e6 on Base), so
   a live run can never yield a savings number. See RESULTS.md, generated.
 
@@ -104,8 +114,10 @@ payload, from buy 9. That is where `tools/session.py --phase learn` stops.
 - `cassum/x402.py` — real paid provider, same interface as `sim.SimProvider`.
   Discovery is live and tested; `fetch()` refuses because signing is not built
 - `tools/quote.py` — prices endpoints off the 402 header, `--live` gates payment
-- `tools/pay_bridge.mjs` — the ONLY thing that can spend. Node, shells out to
+- `tools/pay_bridge.mjs` — Solana settlement. Node, shells out to
   @seekdaseek/plugin-agentfeed. Python never reads the private key
+- `tools/pay_bridge_evm.mjs` — Base settlement. Shells out to
+  @seekdaseek/x402-wallet. Key read from a FILE named by EVM_PAYER
 - `tools/record_402.py` — the ONLY thing that touches the network. Writes
   `tests/fixtures/`, which is what the suite parses
 - `tools/trace.py` — prints the routing decision sequence
@@ -124,8 +136,11 @@ payload, from buy 9. That is where `tools/session.py --phase learn` stops.
         never pasted. Python never reads this; only the Node bridge does
      c. `export CASSUM_MAX_USDC=0.01` for the first run, then raise it
      d. `python tools/quote.py --live`
-   Expect settlement on SOLANA, not Base. If Base is required, that is a new
-   EVM bridge and new signing code — ask first.
+   For BASE instead: `export CASSUM_RAIL=base`,
+   `export CASSUM_WALLET_DIR=/Volumes/D/skrproject/x402-wallet/x402-wallet`,
+   `export EVM_PAYER=/Volumes/D/skrproject/payer-evm.key`, then the same
+   `python tools/quote.py --live`. No npm install needed — that checkout already
+   has @x402/evm 2.18.0 and viem 2.55.2 installed.
 2. README section pointing at the memory call sites by file and function.
    Should also document `tools/session.py` and `tools/quote.py`, which the
    README does not mention yet.

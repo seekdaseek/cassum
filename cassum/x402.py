@@ -13,10 +13,13 @@ itself advertises. The Router's `.price` comes from that quote and from nothing
 else. A price in a config file is a price nobody re-checked; a stale one makes
 `effective_cost` wrong in exactly the direction that costs money.
 
-STAGE 2, PAYMENT, NOT IMPLEMENTED. Settlement is behind `live=True` and refuses
-to run, because signing spends real USDC from a treasury and the signer is a
-decision for the treasury holder, not for this file. See `PaymentNotImplemented`
-for the precise list of what is missing.
+STAGE 2, PAYMENT, behind `live=True` which is off by default. NO SIGNING CODE
+LIVES IN THIS REPO. Each rail shells out to a JS payer that already has a live
+mainnet settlement on that rail, and this module only translates its result:
+  solana  @seekdaseek/plugin-agentfeed  via tools/pay_bridge.mjs
+  base    @seekdaseek/x402-wallet       via tools/pay_bridge_evm.mjs
+Chosen with `CASSUM_RAIL`, default `solana`. Pricing and settlement are separate
+choices: `network` decides which rail is QUOTED, `rail` decides which is PAID.
 
 MEASURED 2026-09-01 against https://x402.ochinimus.app, recorded verbatim in
 tests/fixtures/ by tools/record_402.py:
@@ -72,18 +75,76 @@ RECORDED_PATHS = (
 )
 
 
-# Settlement rail. MEASURED in plugin-agentfeed src/service.ts: the JS payer is
-# an SVM client (@solana/kit, toClientSvmSigner, ExactSvmScheme, bs58) and
-# CANNOT sign for Base. Pricing is read off whichever rail is asked for and is
-# identical on both; paying is Solana only until an EVM bridge exists.
-SETTLEMENT_RAIL_PREFIX = SOLANA_RAIL_PREFIX
-BRIDGE = Path(__file__).resolve().parent.parent / "tools" / "pay_bridge.mjs"
+# --- settlement rails -------------------------------------------------------
+#
+# Pricing and settlement are separate choices. A provider is PRICED on whatever
+# rail you ask for (they quote identically), and SETTLED on whichever rail the
+# configured bridge can actually sign for. Conflating the two is how a run gets
+# signed against the wrong chain.
+#
+# Neither bridge contains signing code. Each shells out to a JS payer:
+#   solana  @seekdaseek/plugin-agentfeed  (@solana/kit, ExactSvmScheme, bs58)
+#   base    @seekdaseek/x402-wallet       (viem signTypedData, ExactEvmScheme)
+# Both already have live mainnet settlements; see FINDINGS.md.
+_TOOLS = Path(__file__).resolve().parent.parent / "tools"
+
+
+@dataclass(frozen=True)
+class RailBridge:
+    """One way to actually pay. `network` is matched as a PREFIX against the
+    rails a challenge offers."""
+
+    name: str
+    network: str
+    script: Path
+    dir_env: str
+    dir_is_cwd: bool
+
+    def directory(self, env: dict[str, str] | None = None) -> str:
+        value = (env if env is not None else os.environ).get(self.dir_env)
+        if not value:
+            raise BridgeError(
+                f"{self.dir_env} is not set, so the {self.name} bridge cannot run. "
+                f"{self.hint}"
+            )
+        return value
+
+    @property
+    def hint(self) -> str:
+        if self.name == "base":
+            return "Point it at the @seekdaseek/x402-wallet checkout."
+        return "Point it at a directory where @seekdaseek/plugin-agentfeed is installed."
+
+
+SETTLEMENT_RAILS: dict[str, RailBridge] = {
+    # cwd matters: the plugin is resolved as a bare specifier from there.
+    "solana": RailBridge("solana", SOLANA_RAIL_PREFIX, _TOOLS / "pay_bridge.mjs",
+                         "CASSUM_BRIDGE_DIR", dir_is_cwd=True),
+    # the wallet library is resolved by absolute path, so cwd is irrelevant.
+    "base": RailBridge("base", BASE_RAIL, _TOOLS / "pay_bridge_evm.mjs",
+                       "CASSUM_WALLET_DIR", dir_is_cwd=False),
+}
+
+RAIL_ENV = "CASSUM_RAIL"
+# Deliberately unchanged when nothing is set. Switching the chain money moves on
+# is not something a library upgrade should do silently; base is one env var away.
+DEFAULT_RAIL = "solana"
 
 # The cumulative ceiling for one run, in USDC. ONE env var, so raising it is a
 # shell edit and never a code change.
 CAP_ENV = "CASSUM_MAX_USDC"
 DEFAULT_CAP_USDC = 0.05
-BRIDGE_DIR_ENV = "CASSUM_BRIDGE_DIR"
+
+
+def rail_from_env(env: dict[str, str] | None = None) -> RailBridge:
+    name = (env if env is not None else os.environ).get(RAIL_ENV) or DEFAULT_RAIL
+    try:
+        return SETTLEMENT_RAILS[name.strip().lower()]
+    except KeyError:
+        raise BridgeError(
+            f"{RAIL_ENV}={name!r} is not a known rail. "
+            f"Choose one of: {', '.join(sorted(SETTLEMENT_RAILS))}."
+        ) from None
 
 
 class X402Error(Exception):
@@ -509,40 +570,44 @@ def reset_default_cap() -> None:
     _DEFAULT_CAP = None
 
 
-def bridge_command(path: str, *, max_per_call: float, bridge: Path = BRIDGE) -> list[str]:
+def bridge_command(path: str, *, max_per_call: float, rail: RailBridge) -> list[str]:
     node = shutil.which("node")
     if node is None:
         raise BridgeError("node is not on PATH, so the payment bridge cannot run.")
-    return [node, str(bridge), "--path", path, "--max-usd", str(max_per_call)]
+    if not rail.script.exists():
+        raise BridgeError(f"{rail.name} bridge is missing at {rail.script}.")
+    return [node, str(rail.script), "--path", path, "--max-usd", str(max_per_call)]
 
 
-def run_bridge(path: str, *, max_per_call: float, timeout: int = 120) -> dict[str, Any]:
-    """Invoke the Node payer and parse its single line of JSON.
+def run_bridge(
+    path: str, *, max_per_call: float, rail: RailBridge | None = None, timeout: int = 120
+) -> dict[str, Any]:
+    """Invoke a Node payer and parse its single line of JSON.
 
-    The child inherits this process's environment, which is how
-    AGENTFEED_PRIVATE_KEY reaches the signer. Python never reads that variable
-    and never logs the environment.
+    The child inherits this process's environment, which is how the payer key
+    reaches the signer -- AGENTFEED_PRIVATE_KEY on Solana, or a key FILE named
+    by EVM_PAYER on Base. Python reads neither, and never logs the environment.
     """
-    cwd = os.environ.get(BRIDGE_DIR_ENV)
-    if not cwd:
-        raise BridgeError(
-            f"{BRIDGE_DIR_ENV} is not set. Point it at a directory where "
-            "@seekdaseek/plugin-agentfeed is installed."
-        )
+    rail = rail or rail_from_env()
+    directory = rail.directory()
     try:
         proc = subprocess.run(
-            bridge_command(path, max_per_call=max_per_call),
-            cwd=cwd, capture_output=True, text=True, timeout=timeout,
+            bridge_command(path, max_per_call=max_per_call, rail=rail),
+            cwd=directory if rail.dir_is_cwd else None,
+            capture_output=True, text=True, timeout=timeout,
         )
     except subprocess.TimeoutExpired as err:
         raise BridgeError(
-            f"bridge timed out after {timeout}s on {path}. Spend is UNKNOWN: a "
-            "signature may have been sent. Check the payer before retrying."
+            f"{rail.name} bridge timed out after {timeout}s on {path}. Spend is "
+            "UNKNOWN: a signature may have been sent. Check the payer before retrying."
         ) from err
 
     line = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
     if not line:
-        raise BridgeError(f"bridge printed nothing on {path}. stderr: {proc.stderr.strip()[:400]}")
+        raise BridgeError(
+            f"{rail.name} bridge printed nothing on {path}. "
+            f"stderr: {proc.stderr.strip()[:400]}"
+        )
     try:
         return json.loads(line)
     except json.JSONDecodeError as err:
@@ -570,6 +635,7 @@ class X402Provider:
         network: str = BASE_RAIL,
         cap: "SpendCap | None" = None,
         bridge: Callable[..., dict[str, Any]] | None = None,
+        rail: "str | RailBridge | None" = None,
     ) -> None:
         self.path = path
         self.quote = quote_
@@ -583,6 +649,10 @@ class X402Provider:
         # importing this module cannot fail on a malformed CASSUM_MAX_USDC.
         self._cap = cap
         self._bridge = bridge or run_bridge
+        # Which rail PAYS. Resolved lazily so importing the module cannot fail
+        # on an unknown CASSUM_RAIL, and so a fleet built before the env is set
+        # still constructs.
+        self._rail = SETTLEMENT_RAILS[rail] if isinstance(rail, str) else rail
 
     @property
     def cap(self) -> SpendCap:
@@ -622,15 +692,26 @@ class X402Provider:
         """The usability predicate, exposed so it is testable without paying."""
         return is_usable(self.path, payload)
 
+    @property
+    def rail(self) -> RailBridge:
+        """Which bridge will sign. From CASSUM_RAIL unless set explicitly."""
+        return self._rail if self._rail is not None else rail_from_env()
+
     def settlement_rail(self) -> Rail:
-        """The rail that will actually be signed. NOT self.network: the JS payer
-        is SVM-only, so a provider priced on Base still settles on Solana."""
-        for rail in self.quote.rails:
-            if rail.network.startswith(SETTLEMENT_RAIL_PREFIX):
-                return rail
+        """The offered rail that will actually be signed.
+
+        NOT necessarily self.network: pricing and settlement are separate
+        choices, and a provider priced on Base can be paid on Solana or the
+        reverse depending on which bridge is configured.
+        """
+        wanted = self.rail
+        for offered in self.quote.rails:
+            if offered.network.startswith(wanted.network):
+                return offered
         raise BridgeError(
-            f"{self.name}: no {SETTLEMENT_RAIL_PREFIX}* rail offered, and the "
-            "bridge cannot sign for anything else."
+            f"{self.name}: no {wanted.network}* rail offered, so the {wanted.name} "
+            f"bridge cannot pay it. Offered: "
+            f"{', '.join(r.network for r in self.quote.rails)}"
         )
 
     def fetch(self) -> tuple[bool, float]:
@@ -653,7 +734,7 @@ class X402Provider:
         # log line, not a guard.
         self.cap.check(quoted)
 
-        result = self._bridge(self.path, max_per_call=quoted)
+        result = self._bridge(self.path, max_per_call=quoted, rail=self.rail)
 
         if not result.get("ok"):
             # MEASURED in plugin src/service.ts: paidGet returns early on a
@@ -661,8 +742,8 @@ class X402Provider:
             # came back. So spend here is genuinely UNKNOWN and recording
             # either 0.0 or the price would be a fabricated data point.
             raise BridgeError(
-                f"{self.name}: bridge reported failure, so spend is UNKNOWN and no "
-                f"empty_rate is recorded. status={result.get('status')} "
+                f"{self.name}: {self.rail.name} bridge reported failure, so spend is "
+                f"UNKNOWN and no empty_rate is recorded. status={result.get('status')} "
                 f"error={result.get('error')}"
             )
 

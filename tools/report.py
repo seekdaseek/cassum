@@ -96,8 +96,12 @@ def main() -> None:
         "here -- and per the section above, a live run against our own treasury",
         "could not produce a comparable one even if it were run.",
         "",
-        "Settlement, when it is run, is on **Solana**. The JS payer this repo",
-        "shells out to is an SVM client and cannot sign for Base; see FINDINGS.md.",
+        "Settlement runs on either rail, selected by `CASSUM_RAIL`. Each rail",
+        "shells out to a separate JS payer, and this repo contains no signing",
+        "code of its own: `solana` uses @seekdaseek/plugin-agentfeed, `base` uses",
+        "@seekdaseek/x402-wallet. Both have prior live mainnet settlements. The",
+        "default is `solana` so that upgrading this package never silently",
+        "changes which chain money moves on.",
         "",
     ]
     out = "\n".join(lines)

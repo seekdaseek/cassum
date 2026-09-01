@@ -106,3 +106,26 @@ failure the deletion test is supposed to expose, hidden behind real writes.
 Fixed by `endpoint_name()`, which strips the argument from the five known
 parameterised routes. Pinned by
 `test_a_path_parameter_never_becomes_the_provider_name`.
+
+## 11. `validateFacilitatorCapabilities` does not fail boot on an unsupported rail
+
+agentfeed `payments.js:102` says of the middleware's sync-on-start: "If the
+facilitator doesn't support our network, boot fails loudly — that IS the check."
+It is not the check. `@x402/core` 2.18.0 `server/index.js`:
+
+    validateFacilitatorCapabilities() {
+      ...
+      const supportedKind = this.getSupportedKind(x402Version2, network, scheme);
+      if (!supportedKind) continue;          // <-- skipped, not an error
+
+An unsupported network is silently skipped at boot. The real gate is later, in
+`buildPaymentRequirements()`, which throws `Facilitator does not support
+<scheme> on <network>` when the same lookup misses.
+
+The consequence is the opposite of alarming, and worth writing down because it
+is load-bearing evidence: since the live service returns a 402 whose `accepts[]`
+contains an `eip155:8453` / `exact` entry, and that entry can only be produced
+by the function that throws, **the configured facilitator demonstrably supports
+EVM exact-scheme on Base.** That is what makes the Base rail payable. It was
+established from source plus one observed 402, not from documentation.
+
