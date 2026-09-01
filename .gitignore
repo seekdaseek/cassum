@@ -2,3 +2,8 @@
 __pycache__/
 *.pyc
 .env
+
+# scratch memory written by the cold-start demo (tools/session.py --db ./demo.db)
+*.db
+*.db-wal
+*.db-shm
