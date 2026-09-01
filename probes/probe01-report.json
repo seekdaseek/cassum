@@ -1,0 +1,98 @@
+{
+  "surface": {
+    "accept_skill_proposal": "(proposal_id: 'str', *, note: 'str | None' = None) -> 'dict[str, Any]'",
+    "archive_entity": "(category: 'str', name: 'str', reason: 'str | None' = None) -> 'dict[str, Any]'",
+    "delete_entity": "(category: 'str', name: 'str') -> 'bool'",
+    "free_tier_status": "() -> 'dict[str, Any]'",
+    "get_entity": "(category: 'str', name: 'str') -> 'dict[str, Any]'",
+    "get_reference": "(key: 'str') -> 'dict[str, Any] | None'",
+    "get_state": "(key: 'str') -> 'dict[str, Any] | None'",
+    "get_tenant": "() -> 'str'",
+    "get_tier": "() -> 'str'",
+    "learn": "(**kwargs: 'Any')",
+    "learner": "(**kwargs: 'Any')",
+    "lint": "(**kwargs: 'Any')",
+    "list_entities": "(category: 'str | None' = None, *, status: 'str | None' = None, limit: 'int' = 100) -> 'list[dict[str, Any]]'",
+    "list_skill_proposals": "(*, status: 'str' = 'pending', limit: 'int' = 50) -> 'list[Any]'",
+    "local": "(path: 'str | Path' = '~/.sibyl-memory/memory.db', *, tenant_id: 'str' = '00000000-0000-0000-0000-000000000001', tier: 'str' = 'free', account_id: 'str | None' = None, session_token: 'str | None' = None, credentials_claim: 'dict[str, Any] | None' = None, credentials_signature: 'str | None' = None) -> \"'MemoryClient'\"",
+    "read_events": "(*, limit: 'int' = 50, since: 'str | None' = None, until: 'str | None' = None) -> 'list[dict[str, Any]]'",
+    "reject_skill_proposal": "(proposal_id: 'str', *, note: 'str | None' = None) -> 'dict[str, Any]'",
+    "schema_version": "() -> 'int | None'",
+    "search": "(query: 'str', *, limit: 'int' = 20, prefix: 'bool' = False, tiers: 'tuple[str, ...] | None' = None) -> 'SearchResults'",
+    "search_entities": "(query: 'str', *, limit: 'int' = 20, prefix: 'bool' = False, category: 'str | None' = None) -> 'SearchResults'",
+    "set_entity": "(category: 'str', name: 'str', body: 'dict[str, Any] | list[Any]', *, status: 'str | None' = None) -> 'dict[str, Any]'",
+    "set_reference": "(key: 'str', body: 'str | dict[str, Any] | list[Any]', *, metadata: 'dict[str, Any] | None' = None) -> 'None'",
+    "set_state": "(key: 'str', body: 'dict[str, Any] | list[Any]') -> 'None'",
+    "set_tenant": "(tenant_id: 'str') -> 'None'",
+    "set_tier": "(tier: 'str') -> 'None'",
+    "write_event": "(*, evaluated: 'Any' = None, acted: 'Any' = None, forward: 'Any' = None, extra: 'Any' = None, ts: 'str | None' = None) -> 'str'"
+  },
+  "results": [
+    {
+      "call": "MemoryClient.local",
+      "status": "WORKS",
+      "detail": "<sibyl_memory_client.client.MemoryClient object at 0x109ea74d0>"
+    },
+    {
+      "call": "set_entity",
+      "status": "WORKS",
+      "detail": "{'id': '5f406dd7-d7fc-48d4-8fb3-fc53d3704b7a', 'tenant_id': '00000000-0000-0000-0000-000000000001', 'category': 'provider', 'name': 'probe-x', 'status': None, 'body': {'empty_rate': 0.4}, 'created_at'"
+    },
+    {
+      "call": "get_entity",
+      "status": "WORKS",
+      "detail": "{'id': '5f406dd7-d7fc-48d4-8fb3-fc53d3704b7a', 'tenant_id': '00000000-0000-0000-0000-000000000001', 'category': 'provider', 'name': 'probe-x', 'status': None, 'body': {'empty_rate': 0.4}, 'created_at'"
+    },
+    {
+      "call": "search_entities",
+      "status": "WORKS",
+      "detail": "SearchResults([{'id': '5f406dd7-d7fc-48d4-8fb3-fc53d3704b7a', 'tenant_id': '00000000-0000-0000-0000-000000000001', 'category': 'provider', 'name': 'probe-x', 'status': None, 'body': {'empty_rate': 0.4"
+    },
+    {
+      "call": "set_state",
+      "status": "WORKS",
+      "detail": "None"
+    },
+    {
+      "call": "get_state",
+      "status": "WORKS",
+      "detail": "{'body': {'usdc': 1.0}, 'updated_at': '2026-09-01T08:52:01.205Z'}"
+    },
+    {
+      "call": "write_event",
+      "status": "WORKS",
+      "detail": "'3be92b3e-b775-47c7-9a0e-2b79890f5d97'"
+    },
+    {
+      "call": "read_events",
+      "status": "WORKS",
+      "detail": "[{'id': '3be92b3e-b775-47c7-9a0e-2b79890f5d97', 'ts': '2026-09-01T08:52:01.207Z', 'evaluated': None, 'acted': ['probe paid call'], 'forward': None, 'extra': None}]"
+    },
+    {
+      "call": "set_reference",
+      "status": "WORKS",
+      "detail": "None"
+    },
+    {
+      "call": "get_reference",
+      "status": "WORKS",
+      "detail": "{'body': '{\"note\":\"x\"}', 'metadata': None, 'updated_at': '2026-09-01T08:52:01.211Z'}"
+    },
+    {
+      "call": "archive_entity",
+      "status": "WORKS",
+      "detail": "{'archived_id': '3af37680-9b53-4a5c-ae59-cf642d143242', 'original_id': '5f406dd7-d7fc-48d4-8fb3-fc53d3704b7a'}"
+    },
+    {
+      "call": "get_after_archive",
+      "status": "FAILED",
+      "detail": "NotFoundError: entity provider/probe-x not found for tenant 00000000-0000-0000-0000-000000000001"
+    },
+    {
+      "call": "delete_entity",
+      "status": "WORKS",
+      "detail": "False"
+    }
+  ],
+  "db": "/var/folders/pn/5hg5nd093rq5ysmw67b4kztw0000gn/T/cassum-probe-ak_eupfd/probe.db"
+}

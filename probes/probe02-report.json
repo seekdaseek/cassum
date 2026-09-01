@@ -1,0 +1,134 @@
+{
+  "results": [
+    {
+      "call": "get_tier",
+      "status": "WORKS",
+      "detail": "'free'"
+    },
+    {
+      "call": "free_tier_status",
+      "status": "WORKS",
+      "detail": "{'tier': 'free', 'db_size_bytes': 282624, 'soft_cap_bytes': 5242880, 'pct_used': 0.05390625, 'uncapped': False, 'at_or_above_warning': False, 'at_or_above_cap': False, 'upgrade_url': 'https://sibyllab"
+    },
+    {
+      "call": "schema_version",
+      "status": "WORKS",
+      "detail": "4"
+    },
+    {
+      "call": "get_tenant",
+      "status": "WORKS",
+      "detail": "'00000000-0000-0000-0000-000000000001'"
+    },
+    {
+      "call": "set_live",
+      "status": "WORKS",
+      "detail": "{'id': '9acb47e9-8d73-48e6-841f-87f056fa3230', 'tenant_id': '00000000-0000-0000-0000-000000000001', 'category': 'provider', 'name': 'live-y', 'status': None, 'body': {'a': 1}, 'created_at': '2026-09-0"
+    },
+    {
+      "call": "delete_live",
+      "status": "WORKS",
+      "detail": "True"
+    },
+    {
+      "call": "delete_again",
+      "status": "WORKS",
+      "detail": "False"
+    },
+    {
+      "call": "delete_never_existed",
+      "status": "WORKS",
+      "detail": "False"
+    },
+    {
+      "call": "ref_dict_in",
+      "status": "WORKS",
+      "detail": "None"
+    },
+    {
+      "call": "ref_dict_out",
+      "status": "WORKS",
+      "detail": "{'body': '{\"k\":[1,2]}', 'metadata': None, 'updated_at': '2026-09-01T08:53:56.470Z'}"
+    },
+    {
+      "call": "ref_body_type",
+      "status": "NOTE",
+      "detail": "str"
+    },
+    {
+      "call": "write_event_full",
+      "status": "WORKS",
+      "detail": "'5668c8ec-58d4-4a42-a2fa-cf4b91ca9ef3'"
+    },
+    {
+      "call": "read_events_since",
+      "status": "WORKS",
+      "detail": "[{'id': '5668c8ec-58d4-4a42-a2fa-cf4b91ca9ef3', 'ts': '2026-09-01T08:53:56.472Z', 'evaluated': ['provider A empty 4/10'], 'acted': ['routed to B'], 'forward': ['recheck A in 1h'], 'extra': {'usdc': 0."
+    },
+    {
+      "call": "list_entities",
+      "status": "WORKS",
+      "detail": "[]"
+    },
+    {
+      "call": "list_entities_status",
+      "status": "WORKS",
+      "detail": "[]"
+    },
+    {
+      "call": "search_crosstier",
+      "status": "WORKS",
+      "detail": "SearchResults([{'tier': 'journal', 'key': '5668c8ec-58d4-4a42-a2fa-cf4b91ca9ef3', 'category': None, 'body': {'evaluated': ['provider A empty 4/10'], 'acted': ['routed to B'], 'forward': ['recheck A in"
+    },
+    {
+      "call": "search_tiers_arg",
+      "status": "FAILED",
+      "detail": "ValueError: unknown tiers: entities; valid: entity, state, reference, journal"
+    },
+    {
+      "call": "set_tenant",
+      "status": "WORKS",
+      "detail": "None"
+    },
+    {
+      "call": "entity_in_tenant2",
+      "status": "WORKS",
+      "detail": "[]"
+    },
+    {
+      "call": "list_skill_proposals",
+      "status": "FAILED",
+      "detail": "TierGateError: self-learning requires a paid tier. Current tier: 'free'."
+    },
+    {
+      "call": "learn",
+      "status": "FAILED",
+      "detail": "TierGateError: self-learning requires a paid tier. Current tier: 'free'."
+    },
+    {
+      "call": "lint",
+      "status": "FAILED",
+      "detail": "TierGateError: memory linter requires a paid tier. Current tier: 'free'."
+    },
+    {
+      "call": "local_with_credentials",
+      "status": "WORKS",
+      "detail": "<sibyl_memory_client.client.MemoryClient object at 0x1064899a0>"
+    },
+    {
+      "call": "authed_get_tier",
+      "status": "WORKS",
+      "detail": "'free'"
+    },
+    {
+      "call": "authed_list_skill_proposals",
+      "status": "FAILED",
+      "detail": "TierGateError: self-learning requires a paid tier. Current tier: 'free'."
+    },
+    {
+      "call": "authed_lint",
+      "status": "FAILED",
+      "detail": "TierGateError: memory linter requires a paid tier. Current tier: 'free'."
+    }
+  ]
+}
