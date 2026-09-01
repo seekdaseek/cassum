@@ -260,3 +260,46 @@ the quote is refused too. Pinned by
 `test_an_amount_the_bridge_could_not_determine_is_not_guessed` and
 `test_a_charge_above_the_quote_is_refused`.
 
+# Part C — which endpoints can actually fail
+
+Read from the deployed handlers on 2026-09-01, not inferred. An endpoint that
+cannot return an unusable payload contributes nothing to an empty-rate
+measurement, however many times it is sampled.
+
+| endpoint | USDC | decline shape | condition |
+|---|---:|---|---|
+| `get_recent_liquidations` | 0.003 | `count: 0`, `liquidations: []` | symbol matches `^[A-Z0-9]{1,20}USDT$` but has no rows in the tape (`liquidations.js:17,41`) |
+| `get_cascade_forecast` | 0.02 | `evidence: "unmeasured"`, `p: null` | thin history, symbol never recorded, or model unavailable (`cascade-forecast.js:74,90`) |
+| `get_peg_deviation` | 0.02 | `status: "no_data"` / `"stale_pool"` | no ticks for the symbol in the window; or on-chain price unchanged across all samples, i.e. a dead pool (`peg.js:99,107`) |
+| `get_oi_spike_scan` | 0.02 | `warming: true`, `ready_in_min` | the 30-minute OI baseline builds from the first call AFTER BOOT, so every redeploy blinds it for half an hour (`derivs.js:145`) |
+| `get_peg_sessions` | 0.03 | `status: "no_data"` / `"stale_pool"` | as peg-deviation (`peg.js:147,155`) |
+| `get_cascade_history` | 0.03 | empty event list | no clustered flush events above `min_usd` in the window (`liqdb.js`) |
+| `get_liq_heatmap` | 0.05 | `levels: []`, `note` | zero liquidations recorded for that symbol in the window (`liqdb.js:56`) |
+| `get_liq_history` | 0.05 | `buckets: []` | as heatmap (`liqdb.js`) |
+| `get_squeeze_score` | 0.10 | `decline: "symbol_not_found"` / `"insufficient_inputs"`, and NO score field | any of funding_rate_8h, oi_change_24h_pct, long_account_pct fails to resolve; `symbol_not_found` when all three fail AND the symbol has never appeared in the tape (`liqdb.js:161`) |
+
+`get_squeeze_score` deserves its own note. Its comment records a previous bug in
+which a score was reported from as little as none of the inputs the published
+note advertises, and the fix was to make a decline an ANSWER returned 200 with
+its reason named. It is the same design as `cascade-forecast`, arrived at
+independently, and it means a 0.10 USDC call can legitimately return nothing.
+
+WHAT CANNOT USEFULLY FAIL. `get_sol_price` and `get_btc_price` fall through
+Coinbase, Kraken and Pyth in turn (`prices.js`) and only return null if all
+three fail. `get_long_short` THROWS on missing data (`derivs.js`), which is a
+500 and an error, not a priced decline. Sampling these measures uptime, not
+usability.
+
+### Predicate coverage
+
+Writing a predicate is a prerequisite for sampling, not an optimisation. The
+default `usable_nonempty_envelope` returns True for ANY non-empty `data`, so it
+would score a `status: "no_data"` payload as a successful delivery and report a
+0% empty rate for an endpoint that failed every call.
+
+Added this session, each against the source shape above: `usable_peg`,
+`usable_oi_spike_scan`. `usable_squeeze_score` already handled its decline
+correctly by requiring a numeric score, which a decline payload does not carry.
+Still on the weak default and NOT safe to sample: everything not listed in
+`USABILITY` or `USABILITY_PREFIX`.
+

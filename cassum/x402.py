@@ -459,6 +459,38 @@ def usable_token_risk(payload: Any) -> bool:
     return isinstance(data.get("risk_flags"), list)
 
 
+def usable_peg(payload: Any) -> bool:
+    """get_peg_deviation and get_peg_sessions.
+
+    Source: agentfeed tools/peg.js. The handler answers 200 with an explicit
+    status: `'ok'` when it has ticks, `'no_data'` when the symbol has none in
+    the window (peg.js:107, :155), and `'stale_pool'` when the on-chain price
+    never moved across the sample -- "dead or delisted pool, not a peg"
+    (peg.js:99, :147). Only `ok` is an answer; the other two are the tool
+    telling you it has nothing, and they must not be paid for twice.
+    """
+    return _data(payload).get("status") == "ok"
+
+
+def usable_oi_spike_scan(payload: Any) -> bool:
+    """get_oi_spike_scan.
+
+    Source: agentfeed tools/derivs.js. The scan needs a 30-minute open-interest
+    baseline that accumulates from the FIRST CALL AFTER BOOT, so a freshly
+    restarted server answers 200 with `{warming: true, ready_in_min, note}` and
+    no spikes at all (derivs.js:145). Success is `{source, baseline_min_ago,
+    spikes: [...]}`.
+
+    This one is worth knowing about operationally: every redeploy resets the
+    baseline, so the endpoint sells nothing usable for half an hour afterwards.
+    """
+    data = _data(payload)
+    if data.get("warming"):
+        return False
+    spikes = data.get("spikes")
+    return isinstance(spikes, list) and len(spikes) > 0
+
+
 def usable_nonempty_envelope(payload: Any) -> bool:
     """The default for an endpoint with no predicate of its own.
 
@@ -477,6 +509,9 @@ USABILITY: dict[str, Callable[[Any], bool]] = {
     "/api/cascade-forecast": usable_cascade_forecast,
     "/api/squeeze-score": usable_squeeze_score,
     "/api/liquidations": usable_liquidations,
+    "/api/peg-deviation": usable_peg,
+    "/api/peg-sessions": usable_peg,
+    "/api/oi-spike-scan": usable_oi_spike_scan,
     "/api/liq-history": usable_liquidations,
     "/api/liq-heatmap": usable_liquidations,
     "/api/cascade-history": usable_liquidations,

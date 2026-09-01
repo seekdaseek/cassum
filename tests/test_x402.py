@@ -295,6 +295,48 @@ def test_a_missing_envelope_is_never_usable():
         assert is_usable("/api/sol-price", junk) is False
 
 
+def test_a_peg_no_data_or_stale_pool_is_not_delivered():
+    """agentfeed tools/peg.js answers 200 with an explicit status. Only 'ok' is
+    an answer; 'no_data' and 'stale_pool' are the tool saying it has nothing."""
+    ok = envelope("get_peg_deviation", {"symbol": "USDe", "status": "ok", "window_hours": 24})
+    assert is_usable("/api/peg-deviation", ok) is True
+    for status in ("no_data", "stale_pool"):
+        bad = envelope("get_peg_deviation", {"symbol": "X", "status": status, "window_hours": 24})
+        assert is_usable("/api/peg-deviation", bad) is False
+        assert is_usable("/api/peg-sessions", bad) is False
+
+
+def test_a_warming_oi_spike_scan_is_not_delivered():
+    """derivs.js builds its 30-minute baseline from the first call AFTER BOOT,
+    so a freshly redeployed server sells nothing usable for half an hour. It
+    answers 200 the whole time."""
+    warming = envelope("get_oi_spike_scan", {"warming": True, "ready_in_min": 26,
+                                             "note": "spike baseline builds from first call after boot"})
+    assert is_usable("/api/oi-spike-scan", warming) is False
+    ready = envelope("get_oi_spike_scan", {"source": "bybit_linear_universe",
+                                           "baseline_min_ago": 31,
+                                           "spikes": [{"symbol": "SOLUSDT", "oi_change_pct": 12.4}]})
+    assert is_usable("/api/oi-spike-scan", ready) is True
+    empty = envelope("get_oi_spike_scan", {"source": "x", "baseline_min_ago": 31, "spikes": []})
+    assert is_usable("/api/oi-spike-scan", empty) is False
+
+
+def test_a_squeeze_score_decline_is_not_delivered():
+    """MEASURED from liqdb.js:161. A decline carries `decline` and `reason` and
+    NO score field at all, which is why requiring a numeric score is the right
+    test. Its own note: 'a decline is an answer, not an error'."""
+    decline = envelope("get_squeeze_score", {
+        "symbol": "NOSUCHCOINUSDT", "decline": "symbol_not_found",
+        "reason": "no venue quotes NOSUCHCOINUSDT and it has never appeared in the liquidation tape",
+        "missing_inputs": ["funding_rate_8h", "oi_change_24h_pct", "long_account_pct"],
+        "recorded_in_tape": False,
+    })
+    assert is_usable("/api/squeeze-score", decline) is False
+    partial = envelope("get_squeeze_score", {"symbol": "X", "decline": "insufficient_inputs",
+                                             "missing_inputs": ["funding_rate_8h"]})
+    assert is_usable("/api/squeeze-score", partial) is False
+
+
 def test_an_unregistered_endpoint_falls_back_to_the_weak_default():
     """Documented as weak on purpose: it cannot tell an answer from a decline,
     so it under-reports empties. Pinned so nobody mistakes it for a real one."""
