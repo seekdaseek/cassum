@@ -49,6 +49,50 @@ All 44 endpoints re-verified afterwards.
 *Cost:* ~0.19 USDC across the diagnosis and bisection. The endpoint had been
 unbuyable for its entire life; it is AgentFeed's flagship exclusive.
 
+*Cause, traced in the deployed repo's own history — and it is not quite the
+story we assumed.* `git log -S` skips merge commits by default, which hid this
+at first; `--full-history` and direct `git show <ref>:expansion.js` probes give
+the real sequence:
+
+| ref | date | `GET /api/cascade-forecast` | desc |
+|---|---|---|---:|
+| `c46edf7` (adds expansion.js) | Jul 18 | absent | — |
+| `da9a4f1` (merge parent A) | Aug 27 | absent | — |
+| `7a31943` (merge parent B) | Aug 27 | absent | — |
+| **`a141294`** (the merge) | **Aug 27 09:22** | **present** | **683** |
+| `HEAD` | today | present | 683 |
+
+`a141294`, a 14-commit merge, is indeed where the paid route entered the
+deployed branch — it appears in neither parent. **But two parts of the
+assumption do not survive checking:**
+
+**It was never moved out of `mcp.js`.** `mcp.js` has never defined the paid
+`get_cascade_forecast` — zero occurrences at `da9a4f1`, `a141294` and `HEAD`.
+What it defines, added five minutes earlier in `55a593f`, are the FREE
+variants: `get_cascade_forecast_free`, `get_forecast_question`,
+`get_forecast_record`. An earlier `-S` search appeared to find the paid tool in
+`mcp.js` only because `get_cascade_forecast` is a substring of
+`get_cascade_forecast_free`.
+
+**There was no short-description era, so it never "stopped" settling.** The
+route arrived with all 683 characters already attached; no commit anywhere in
+the 53-commit history carries a shorter one. The endpoint was **never payable
+at any point in its life** — born broken on Aug 27, not regressed into it.
+
+That also explains the impression that it once worked: the free MCP taster did
+work, and still does. Free tools carry no price, so nothing is ever sent to the
+facilitator for validation. Only the paid HTTP route touches the code path that
+fails.
+
+*Why a deploy check passed anyway.* Everything a manifest count inspects is
+derived from the `PRICES` table: `GET /`, `/.well-known/x402.json`, the landing
+page and the MCP tool list. All 44 entries appear, all quote the right price,
+and all issue a well-formed 402 challenge. Counting entries — or curling the
+endpoint — confirms every one of those and still cannot see the failure, which
+only appears when a signed payment is presented for verification. Fixing
+discovery and verifying discovery are the same act; billing was never in the
+loop.
+
 *Both rails, checked:* `resource.description` is a single top-level field in
 the challenge, shared by every entry in `accepts[]` — neither rail carries its
 own — so `challengeDesc()` covers Solana and Base by construction. Confirmed by
