@@ -1,8 +1,10 @@
 """Generate RESULTS.md from actual runs. No figure in that file is typed by hand."""
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import subprocess
+from pathlib import Path
 
 from cassum.ablate import run
 from cassum.sim import default_fleet, flat_fleet
@@ -30,7 +32,77 @@ def block(r: dict) -> str:
     )
 
 
+def live_block(db: Path | None) -> list[str]:
+    """Observed rates, read out of the live memory store. Nothing here is typed.
+
+    These sit ALONGSIDE the simulated table and are never combined with it. The
+    simulated fleet answers "what does memory save when providers differ"; this
+    answers "how often does a real endpoint actually deliver". One is arithmetic
+    over chosen failure rates, the other is a count of real purchases. Averaging
+    them, or quoting a saving from these, would be meaningless.
+    """
+    head = [
+        "## Measured against live endpoints",
+        "",
+    ]
+    if db is None or not db.exists():
+        return head + [
+            "No live measurement has been recorded yet. `cassum/sim.py`'s failure",
+            "patterns are chosen, not observed, and the table above says so. Run",
+            "`tools/measure.py --db <path>` and regenerate this file to replace",
+            "this paragraph with counted purchases.",
+            "",
+        ]
+
+    from cassum.memory import Store
+
+    rows = Store.open(db).providers()
+    if not rows:
+        return head + ["The live store at `" + db.name + "` holds no purchases yet.", ""]
+
+    out = head + [
+        f"Read from `{db.name}`, written by `tools/measure.py`. Every row is a count",
+        "of real paid calls on Base; every purchase's transaction hash is in that",
+        "store's journal under `extra.tx`.",
+        "",
+        "| endpoint | paid calls | unusable | empty rate | USDC spent |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    calls = empty = 0
+    spent = 0.0
+    for row in sorted(rows, key=lambda r: r["name"]):
+        b = row["body"]
+        calls += int(b["calls"])
+        empty += int(b["empty"])
+        spent += float(b["usdc_spent"])
+        out.append(
+            f"| `{row['name']}` | {b['calls']} | {b['empty']} | "
+            f"{float(b['empty_rate']):.4f} | {float(b['usdc_spent']):.5f} |"
+        )
+    out += [
+        "",
+        f"{calls} paid calls across {len(rows)} endpoints, {empty} of them unusable, "
+        f"{spent:.5f} USDC spent.",
+        "",
+        "**`empty rate` is the usability predicate, not the status code.** A row's",
+        "unusable count is calls that returned HTTP 200 and nothing worth having --",
+        "for `cascade-forecast` that is the by-design decline when a symbol's",
+        "history is too thin to answer from.",
+        "",
+        "**These numbers cannot be turned into a saving.** The payee is a treasury",
+        "this project controls, so the cost side is not arm's length. What they do",
+        "establish is that the empty rates the router learns from are real, and",
+        "that the simulated dispersion above is a model of something that exists.",
+        "",
+    ]
+    return out
+
+
 def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--live-db", type=Path, default=Path("live.db"),
+                    help="memory store written by tools/measure.py")
+    args = ap.parse_args()
     lines = [
         "# Results",
         "",
@@ -38,6 +110,11 @@ def main() -> None:
         f"from commit `{commit()}`. Every number below is computed from a run, not typed.",
         "",
         "## The deletion test",
+        "",
+        "**Simulated fleet.** The failure patterns in `cassum/sim.py` are CHOSEN,",
+        "not observed. This section is arithmetic over a model. Counted rates from",
+        "real paid endpoints are a separate section below and are never merged",
+        "into these figures.",
         "",
         "Same workload twice: once against Sibyl Memory, once against a `NullStore`",
         "that accepts every write and returns nothing on every read. That second run",
@@ -51,6 +128,7 @@ def main() -> None:
     ]
     for f in (default_fleet, flat_fleet):
         lines.append(block(run(fleet=f)))
+    lines += live_block(args.live_db)
     lines += [
         "## What a LIVE run can and cannot show",
         "",

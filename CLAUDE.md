@@ -79,6 +79,17 @@ Verified 2026-09-01. Challenges recorded verbatim in `tests/fixtures/`.
   `validateFacilitatorCapabilities()` does NOT enforce this at boot — it does
   `if (!supportedKind) continue`. agentfeed payments.js:102 claims boot fails
   loudly; it does not. The throw happens at requirements-building time.
+- FIRST LIVE SETTLEMENT FROM CASSUM, 2026-09-01, verified on basescan:
+  `0x1f99b069600f32d890c710b3e8894e415cbe039c6e102750c28d7c9866a580cf`
+  0.001 USDC, block 50738445, `/api/sol-price`, delivered=True by the usability
+  predicate. Payer `0xFEfF369D5048b2Cf817d87467E48404b3ADfE4Ee` -> treasury
+  `0x22DB..76e6`; balance 0.029000 -> 0.028000, exactly the quoted amount. Gas
+  paid by relayer `0x93f6..be44`, payer holds 0 ETH throughout. The settlement
+  payload carries success/payer/transaction/network and NO `amountUsd`, so the
+  paidUsd fallback (the header-parsed amount) is the code path that ran.
+  Preceded by a dry run at CASSUM_MAX_USDC=0.0005 in which all six endpoints
+  refused pre-signature, the bridge was reached 0 times, and the on-chain
+  balance was unchanged.
 - x402-wallet has ALREADY settled both rails on mainnet against this service:
   Solana `5XPKFW…WqM2`, Base `0xe49b8c…4a31` (0.001 USDC each). The payer holds
   zero native gas on either chain; the facilitator sponsors it.
@@ -118,6 +129,10 @@ payload, from buy 9. That is where `tools/session.py --phase learn` stops.
   @seekdaseek/plugin-agentfeed. Python never reads the private key
 - `tools/pay_bridge_evm.mjs` — Base settlement. Shells out to
   @seekdaseek/x402-wallet. Key read from a FILE named by EVM_PAYER
+- `tools/measure.py` — samples live endpoints round-robin to measure REAL
+  empty rates. Pre-flight refuses a run it cannot afford. `--plan` costs it
+  without spending
+- `tools/payer_info.mjs` — READ ONLY: payer address and Base balances. `--json`
 - `tools/record_402.py` — the ONLY thing that touches the network. Writes
   `tests/fixtures/`, which is what the suite parses
 - `tools/trace.py` — prints the routing decision sequence
@@ -127,9 +142,15 @@ payload, from buy 9. That is where `tools/session.py --phase learn` stops.
 
 ## Still to build, in order
 
-1. RUN THE LIVE SETTLEMENT ONCE. The code is built and every refusal path is
-   verified, but NO PAYMENT HAS EVER BEEN MADE — nothing is proven until a tx
-   hash exists. Needs, in order:
+1. THE MEASUREMENT RUN. BLOCKED ON FUNDS, not code. `tools/measure.py` is
+   built and its pre-flight refuses to start: the plan costs 0.2180 USDC and
+   the payer holds 0.028000, short 0.1900. A run that dies halfway leaves a
+   half-measured empty_rate that reads like a real one, so it refuses rather
+   than starting. Fund `0xFEfF369D5048b2Cf817d87467E48404b3ADfE4Ee` with USDC
+   on Base, or lower `--samples`. Then regenerate RESULTS.md, whose live
+   section reads the run's memory store.
+
+DONE, and its settings kept for the rerun: the live gate.
      a. `npm i @seekdaseek/plugin-agentfeed` in some directory (it is installed
         NOWHERE on this machine right now), then `export CASSUM_BRIDGE_DIR=` it
      b. `export AGENTFEED_PRIVATE_KEY=` the Solana payer, read from a file,

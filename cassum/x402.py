@@ -179,6 +179,18 @@ PARAM_ROUTES = (
 )
 
 
+def route_of(path: str) -> str:
+    """The path without its query string.
+
+    A query is an ARGUMENT, exactly like a `:mint` path segment, and it must not
+    reach the provider name for the same reason: Router keys memory on the name,
+    so `?symbol=SOL` and `?symbol=BTC` would file as two providers, neither
+    reaching min_calls. Same bug as the token-risk one in FINDINGS 10, one layer
+    along.
+    """
+    return path.split("?", 1)[0]
+
+
 def endpoint_name(path: str) -> str:
     """The provider's identity, which is the ENDPOINT and never its argument.
 
@@ -187,7 +199,7 @@ def endpoint_name(path: str) -> str:
     ever reach `min_calls` and nothing would leave LEARNING -- memory would
     accumulate and never once change a decision.
     """
-    trimmed = path.rstrip("/")
+    trimmed = route_of(path).rstrip("/")
     for prefix in PARAM_ROUTES:
         if trimmed.startswith(prefix):
             return prefix.strip("/").rsplit("/", 1)[-1]
@@ -479,10 +491,11 @@ assert set(USABILITY_PREFIX) <= set(PARAM_ROUTES), "a prefix predicate names an 
 
 
 def predicate_for(path: str) -> Callable[[Any], bool]:
-    if path in USABILITY:
-        return USABILITY[path]
+    route = route_of(path)
+    if route in USABILITY:
+        return USABILITY[route]
     for prefix, fn in USABILITY_PREFIX.items():
-        if path.startswith(prefix):
+        if route.startswith(prefix):
             return fn
     return usable_nonempty_envelope
 

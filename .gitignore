@@ -7,3 +7,6 @@ __pycache__/
 *.db
 *.db-wal
 *.db-shm
+
+# scratch memory store written by tools/measure.py
+live.db

@@ -79,6 +79,10 @@ class Router:
             return False, 0.0, reason
         considered = [f"{q.name}:{self.verdict(q.name)[0]}" for q in self.providers]
         delivered, usdc = p.fetch()
+        # fetch() returns (delivered, usdc) for EVERY provider -- that is the
+        # interface sim and x402 share and it does not change. A real payment
+        # leaves its receipt on the provider as a side channel; a simulated one
+        # has no such attribute and journals nothing extra.
         self.store.record_purchase(
             p.name,
             delivered=delivered,
@@ -86,6 +90,7 @@ class Router:
             considered=considered,
             next_step=[] if delivered else [f"re-evaluate {p.name}"],
             note=reason,
+            settlement=getattr(p, "settlement", None),
         )
         return delivered, usdc, reason
 

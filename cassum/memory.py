@@ -40,6 +40,24 @@ def _credentials() -> dict[str, Any]:
         return json.load(f)
 
 
+# Rails name the transaction differently. MEASURED on Base 2026-09-01: the CDP
+# facilitator returns {"success", "payer", "transaction", "network"}. Solana's
+# payload is not yet observed from this repo, so the other spellings are
+# candidates, not measurements -- which is why an unrecognised payload keeps the
+# whole settlement in `extra` rather than being silently dropped.
+TX_KEYS = ("transaction", "txHash", "tx_hash", "transactionHash", "signature", "hash")
+
+
+def tx_hash(settlement: Any) -> str | None:
+    if not isinstance(settlement, dict):
+        return None
+    for key in TX_KEYS:
+        value = settlement.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
 class Store:
     """Thin wrapper. Absence is a value here, never an exception."""
 
@@ -103,11 +121,19 @@ class Store:
         considered: list[str] | None = None,
         next_step: list[str] | None = None,
         note: str = "",
+        settlement: dict[str, Any] | None = None,
     ) -> str:
         """One paid call. Updates the provider record and journals the decision.
 
         MEASURED: write_event accepts evaluated / acted / forward / extra and
         all four round-trip through read_events. Only `acted` is documented.
+
+        `settlement` is the on-chain receipt for a real payment, journalled
+        verbatim in `extra`. The transaction hash is lifted to `extra["tx"]` so
+        an auditor can find it without knowing each rail's payload shape: the
+        Base facilitator returns `transaction`, and nothing guarantees the next
+        rail uses the same key. A simulated purchase has no settlement and the
+        keys are simply absent -- absence is a value here, as everywhere else.
         """
         prior = self.get_provider(provider) or {}
         body = dict(prior.get("body") or {})
@@ -116,11 +142,19 @@ class Store:
         body["usdc_spent"] = round(float(body.get("usdc_spent", 0.0)) + usdc, 8)
         body["empty_rate"] = round(body["empty"] / body["calls"], 4)
         self._c.set_entity(PROVIDER, provider, body)
+        extra: dict[str, Any] = {
+            "provider": provider, "delivered": delivered, "usdc": usdc, "note": note,
+        }
+        if settlement:
+            extra["settlement"] = settlement
+            tx = tx_hash(settlement)
+            if tx:
+                extra["tx"] = tx
         return self._c.write_event(
             evaluated=considered or [],
             acted=[f"paid {usdc} USDC to {provider}"],
             forward=next_step or [],
-            extra={"provider": provider, "delivered": delivered, "usdc": usdc, "note": note},
+            extra=extra,
         )
 
     def cap(self) -> dict[str, Any]:

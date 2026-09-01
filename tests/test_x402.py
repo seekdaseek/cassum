@@ -309,6 +309,20 @@ def test_path_parameter_routes_resolve_by_prefix():
     assert predicate_for("/api/token-risk/AnyMintAddressAtAll") is usable_token_risk
 
 
+def test_a_query_string_never_becomes_the_provider_name():
+    """Same bug as the token-risk one, one layer along. The measurement run
+    calls /api/cascade-forecast?symbol=X to exercise the decline; if the query
+    reached the name, every symbol would file as its own provider and no
+    empty_rate would ever accumulate."""
+    assert endpoint_name("/api/cascade-forecast?symbol=SOLUSDT") == "cascade-forecast"
+    assert endpoint_name("/api/cascade-forecast?symbol=BTCUSDT") == "cascade-forecast"
+    assert endpoint_name("/api/token-risk/SoMint?verbose=1") == "token-risk"
+    # and the predicate must still resolve past the query
+    assert predicate_for("/api/cascade-forecast?symbol=X") is not usable_nonempty_envelope
+    assert is_usable("/api/cascade-forecast?symbol=X", forecast("unmeasured")) is False
+    assert is_usable("/api/cascade-forecast?symbol=X", forecast("measured", 0.3)) is True
+
+
 def test_a_path_parameter_never_becomes_the_provider_name():
     """Found by running tools/quote.py: naming this provider after its last
     path segment called it `So1111..112`. Router keys memory on the name, so
