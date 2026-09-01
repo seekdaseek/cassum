@@ -53,10 +53,10 @@ Verified 2026-09-01, Python 3.12.13, macOS. Raw output in `probes/`.
 - Account tier is FREE, so `learn()`, `learner()`, `lint()` and the
   skill-proposal calls raise TierGateError. Do not call them.
 
-## State as of commit f7648fd
+## State as of commit 370c162
 
-16 tests green. Working: memory layer, router, deletion-test harness, trace
-tool, generated RESULTS.md, packaging, public repo.
+26 tests green. Working: memory layer, router, deletion-test harness, trace
+tool, generated RESULTS.md, packaging, public repo, cold-start recall demo.
 
 Measured result, `default_fleet`, 20 payloads: 0.00555 USDC per payload with
 memory against 0.01200 without. 24 calls against 80. 53.75% of spend recovered.
@@ -65,7 +65,9 @@ memory against 0.01200 without. 24 calls against 80. 53.75% of spend recovered.
 Routing behaviour measured off `tools/trace.py`: exploration is breadth-first
 because untried outranks learning, so every provider gets one call before any
 gets a second. hollow-cheap is condemned after buy 5; the router settles on
-steady-dear from buy 8.
+steady-dear from buy 8 — but on LEARNING rank, i.e. because it is still
+under-explored. steady-dear is TRUSTED, and so chosen on measured cost per
+payload, from buy 9. That is where `tools/session.py --phase learn` stops.
 
 ## Layout
 
@@ -74,6 +76,8 @@ steady-dear from buy 8.
   ranks TRUSTED providers by price / (1 - empty_rate), not by sticker price
 - `cassum/sim.py` — deterministic fake providers, no network, no spend
 - `cassum/ablate.py` — deletion test as code, NullStore vs real Store
+- `tools/session.py` — the gate beat: `--phase learn` then `--phase recall`,
+  two processes, one db, recall spends nothing
 - `tools/trace.py` — prints the routing decision sequence
 - `tools/report.py` — generates RESULTS.md from runs
 - `probes/` — capability probes and JSON reports
@@ -81,12 +85,19 @@ steady-dear from buy 8.
 
 ## Still to build, in order
 
-1. `tools/session.py` — cold-start recall across two separate processes. The
-   gate beat. Nothing else can be filmed without it.
-2. A real x402 provider adapter behind the same interface as `sim.SimProvider`.
+1. A real x402 provider adapter behind the same interface as `sim.SimProvider`.
    BLOCKED: waiting on which live endpoints are in scope. Do not invent any.
-3. README section pointing at the memory call sites by file and function.
-4. Video, 2 to 5 minutes. Two build-in-public posts tagging @sibylcap.
+2. README section pointing at the memory call sites by file and function.
+   Should also document the two `tools/session.py` commands, which the README
+   does not mention yet.
+3. Video, 2 to 5 minutes. Two build-in-public posts tagging @sibylcap.
+
+DONE, commit 370c162: `tools/session.py`. Filmed as two runs of
+`python tools/session.py --db ./demo.db --phase learn|recall`. Learn settles
+after 9 buys, NOT at hollow-cheap's condemnation on buy 5 — at buy 5 the
+standing choice is still `mid` on sticker price. Pinned by
+`test_condemned_alone_is_not_a_sufficient_stop`; do not "simplify" that stop
+condition back.
 
 ## Environment
 
