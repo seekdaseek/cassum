@@ -8,6 +8,10 @@ stale quote, and next run it pays the same provider again. Every purchase is a
 cold start. `cassum` remembers what each provider actually delivered and stops
 paying the ones that don't.
 
+**Live: https://cassum.ochinimus.app** The deletion test and the two-process
+recall both execute on the server when you click them. Nothing on that page is
+precomputed.
+
 ## Where memory is load-bearing
 
 Built on [Sibyl Memory](https://docs.sibyllabs.org/memory/) (`sibyl-memory-client`).

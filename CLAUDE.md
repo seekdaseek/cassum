@@ -50,7 +50,7 @@ Verified 2026-09-01, Python 3.12.13, macOS. Raw output in `probes/`.
   STRING. `Store.read_reference` decodes it.
 - `delete_entity` returns True on a live entity, False when there is nothing to
   delete. Correct behaviour, not a bug.
-- Account tier is FREE, so `learn()`, `learner()`, `lint()` and the
+- Account tier was FREE during the build, so `learn()`, `learner()`, `lint()` and the
   skill-proposal calls raise TierGateError. Do not call them.
 
 ## Measured surface, x402.ochinimus.app
