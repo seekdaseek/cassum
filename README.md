@@ -123,6 +123,21 @@ The cap is checked against the amount parsed from the `payment-required`
 header *before* anything is signed, because there is no refund. A second,
 independent per-call ceiling is enforced inside the JS client.
 
+## Partner stacks, and where
+
+**Base.** The `base` rail above is where Base does real work. An x402 payment is
+signed and settled on Base mainnet before a payload is returned, and the
+resulting transaction hash is written into memory on the journal event as
+`extra.tx` (`cassum/memory.py:153`), so what was paid and what it bought are one
+record rather than two. The rail is selected with `CASSUM_RAIL=base` and the
+bridge is `tools/pay_bridge_evm.mjs`, signing through `@seekdaseek/x402-wallet`.
+Base mainnet settlements recorded during this build, transaction hashes
+included, are in `FINDINGS.md` 8 to 12 — finding 12 bisected an undocumented
+length bound in the facilitator that made an endpoint unpayable, and it cost
+real USDC on Base mainnet to find.
+
+**Virtuals Protocol.** Not used, and not claimed.
+
 ## Cold-start recall, across two processes
 <a id="cold-start-recall-across-two-processes"></a>
 
@@ -150,6 +165,24 @@ in `FINDINGS.md`.
 The suite is offline. `tools/record_402.py` is the only thing in the repo that
 touches the network, and `tests/test_x402.py` blocks `urlopen` for its whole
 module.
+
+## How memory made this possible
+
+Without a memory layer the router has exactly one signal: the price in the 402
+challenge. Price is free to discover and says nothing about whether the payload
+is worth having, so the only rational memoryless policy is to buy the cheapest
+provider, every time, forever.
+
+Sibyl Memory is what turns a purchase into evidence. One entity per provider
+carries `calls`, `empty`, `usdc_spent` and `empty_rate`. One journal event per
+paid call carries what was evaluated, what came back, and the transaction hash.
+That is the entire difference between the two runs in the deletion test: 24 paid
+calls against 80, for the same 20 delivered payloads. Remove the entity tier and
+every provider is UNTRIED forever, and the router falls back to sticker price.
+
+The recall process is what proves the dependence lives on disk and not in RAM.
+It runs in a different pid, its `record_purchase` raises rather than buying, and
+it still names the right provider from records another process wrote.
 
 ## Prior work declaration
 
